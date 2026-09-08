@@ -9,7 +9,66 @@ import httpx
 log = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+TELEGRAM_UPDATES = "https://api.telegram.org/bot{token}/getUpdates"
+TELEGRAM_ME = "https://api.telegram.org/bot{token}/getMe"
 MAX_LEN = 3800
+
+
+class TelegramUnreachable(RuntimeError):
+    """Не стигнахме до Telegram — мрежа, DNS или сертификати, не токенът."""
+
+
+class TelegramRejected(RuntimeError):
+    """Telegram отговори, но отказа заявката (най-често грешен токен)."""
+
+
+async def _get(url: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url)
+        return resp.json()
+    except httpx.HTTPError as exc:
+        raise TelegramUnreachable(str(exc)) from exc
+
+
+async def check_token(token: str) -> str:
+    """Връща потребителското име на бота или вдига грешка с обяснение."""
+    data = await _get(TELEGRAM_ME.format(token=token))
+    if not data.get("ok"):
+        raise TelegramRejected(data.get("description", "Telegram отказа токена"))
+    return data["result"].get("username", "?")
+
+
+async def discover_chats(token: str) -> list[tuple[str, str]]:
+    """Намира chat id-тата, писали на бота. Връща [(id, описание)].
+
+    Telegram показва разговор в getUpdates само след като някой пише на бота
+    пръв — затова стъпката „пусни /start на бота" не е по избор.
+    """
+    data = await _get(TELEGRAM_UPDATES.format(token=token))
+    if not data.get("ok"):
+        raise TelegramRejected(data.get("description", "Telegram отказа заявката"))
+
+    found: dict[str, str] = {}
+    for update in data.get("result", []):
+        message = (
+            update.get("message")
+            or update.get("channel_post")
+            or update.get("my_chat_member")
+            or {}
+        )
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        if chat_id is None:
+            continue
+        name = (
+            chat.get("title")
+            or " ".join(filter(None, [chat.get("first_name"), chat.get("last_name")]))
+            or chat.get("username")
+            or "без име"
+        )
+        found[str(chat_id)] = f"{name} ({chat.get('type', '?')})"
+    return sorted(found.items())
 
 
 class Notifier:

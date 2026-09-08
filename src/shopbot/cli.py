@@ -15,7 +15,13 @@ from .browser import BrowserSession, any_present
 from .config import load_config
 from .db import Database
 from .listing import build_listing
-from .notify import Notifier
+from .notify import (
+    Notifier,
+    TelegramRejected,
+    TelegramUnreachable,
+    check_token,
+    discover_chats,
+)
 from .orchestrator import Orchestrator
 from .pricing import compute_price, format_money
 from .selection import evaluate
@@ -172,6 +178,74 @@ def import_session(
                 )
         finally:
             await session.stop()
+
+    asyncio.run(_run())
+
+
+@app.command("test-notify")
+def test_notify(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
+    """Проверява Telegram настройките и праща пробно съобщение.
+
+    Без TELEGRAM_CHAT_ID показва кои разговори вижда ботът, за да си избереш id-то.
+    """
+    setup_logging(verbose)
+    cfg, _, notifier = _ctx()
+    token = cfg.secrets.telegram_bot_token
+    chat_id = cfg.secrets.telegram_chat_id
+
+    if not token:
+        console.print(
+            "[red]Липсва TELEGRAM_BOT_TOKEN в .env[/red]\n"
+            "Направи бот при @BotFather в Telegram с командата /newbot."
+        )
+        raise typer.Exit(1)
+
+    async def _run() -> None:
+        try:
+            username = await check_token(token)
+        except TelegramUnreachable as exc:
+            console.print(
+                f"[red]Не стигам до Telegram:[/red] {exc}\n"
+                "Това е мрежов проблем, не проблем с токена — провери интернета, "
+                "DNS-а или сертификатите на машината."
+            )
+            raise typer.Exit(1) from exc
+        except TelegramRejected as exc:
+            console.print(
+                f"[red]Telegram отказа токена:[/red] {exc}\n"
+                "Копирай го пак от @BotFather — целия ред, включително числата "
+                "пред двоеточието."
+            )
+            raise typer.Exit(1) from exc
+        console.print(f"[green]Токенът работи.[/green] Ботът е @{username}")
+
+        if not chat_id:
+            console.print("\n[yellow]Липсва TELEGRAM_CHAT_ID.[/yellow] Търся разговори…")
+            chats = await discover_chats(token)
+            if not chats:
+                console.print(
+                    f"Няма нито един. Отвори https://t.me/{username} в Telegram, "
+                    "натисни Start (или пиши каквото и да е) и пусни командата пак."
+                )
+                raise typer.Exit(1)
+
+            table = Table(title="намерени разговори")
+            table.add_column("TELEGRAM_CHAT_ID")
+            table.add_column("кой е")
+            for cid, name in chats:
+                table.add_row(cid, name)
+            console.print(table)
+            console.print("Сложи желаното id в .env и пусни командата пак.")
+            raise typer.Exit(1)
+
+        await notifier.send(
+            "✅ <b>shopbot</b> е свързан.\n"
+            "Оттук ще получаваш публикувани обяви, свалени обяви и грешки."
+        )
+        console.print(
+            f"[green]Пратих пробно съобщение до {chat_id}.[/green] "
+            "Провери Telegram — ако не е пристигнало, id-то е грешно."
+        )
 
     asyncio.run(_run())
 
