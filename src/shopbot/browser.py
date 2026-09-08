@@ -16,6 +16,7 @@ from playwright.async_api import (
     Page,
     async_playwright,
 )
+from playwright.async_api import Error as PlaywrightError
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,10 @@ class SelectorMissing(RuntimeError):
     """Нито един кандидат-селектор не е намерен — най-вероятно сайтът е сменил дизайна."""
 
 
+class BrowserMissing(RuntimeError):
+    """Playwright е инсталиран, но самият Chromium не е свален."""
+
+
 class BrowserSession:
     """Един постоянен профил (бисквитки + localStorage) на диска."""
 
@@ -56,19 +61,32 @@ class BrowserSession:
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self._pw = await async_playwright().start()
         width, height = random.choice(VIEWPORTS)
-        self.context = await self._pw.chromium.launch_persistent_context(
-            user_data_dir=str(self.profile_dir),
-            headless=self.headless,
-            user_agent=USER_AGENT,
-            viewport={"width": width, "height": height},
-            locale="bg-BG",
-            timezone_id="Europe/Sofia",
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
-        )
+        try:
+            self.context = await self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(self.profile_dir),
+                headless=self.headless,
+                user_agent=USER_AGENT,
+                viewport={"width": width, "height": height},
+                locale="bg-BG",
+                timezone_id="Europe/Sofia",
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
+        except PlaywrightError as exc:
+            # Инсталирането на пакета не сваля браузъра — това са две стъпки
+            # и втората често се пропуска.
+            if "Executable doesn't exist" in str(exc):
+                await self._pw.stop()
+                self._pw = None
+                raise BrowserMissing(
+                    "Chromium за Playwright не е свален. Пусни:\n"
+                    "  Windows:  .\\.venv\\Scripts\\playwright install chromium\n"
+                    "  Linux:    ./.venv/bin/playwright install chromium"
+                ) from None
+            raise
         self.context.set_default_timeout(30_000)
         return self.context
 

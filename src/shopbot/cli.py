@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .browser import BrowserSession, any_present
+from .browser import BrowserMissing, BrowserSession, any_present
 from .config import load_config
 from .db import Database
 from .listing import build_listing
@@ -39,6 +39,15 @@ def setup_logging(verbose: bool = False) -> None:
         datefmt="%H:%M:%S",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def _run_async(coro):
+    """Пуска корутина и превръща предвидимите сривове в четимо съобщение."""
+    try:
+        return asyncio.run(coro)
+    except BrowserMissing as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
 
 
 def _ctx():
@@ -99,7 +108,7 @@ def login(
         finally:
             await session.stop()
 
-    asyncio.run(_run())
+    _run_async(_run())
 
 
 @app.command("export-session")
@@ -131,7 +140,7 @@ def export_session(
         finally:
             await session.stop()
 
-    asyncio.run(_run())
+    _run_async(_run())
 
 
 @app.command("import-session")
@@ -179,7 +188,7 @@ def import_session(
         finally:
             await session.stop()
 
-    asyncio.run(_run())
+    _run_async(_run())
 
 
 @app.command("test-notify")
@@ -247,7 +256,7 @@ def test_notify(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
             "Провери Telegram — ако не е пристигнало, id-то е грешно."
         )
 
-    asyncio.run(_run())
+    _run_async(_run())
 
 
 # ----------------------------------------------------------------------- run
@@ -266,7 +275,7 @@ def once(
     cfg, db, notifier = _ctx()
     orch = Orchestrator(cfg, db, notifier)
 
-    report = asyncio.run(
+    report = _run_async(
         orch.run_once(
             discover=not no_discover,
             publish=not no_publish,
@@ -287,7 +296,7 @@ def run(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     orch = Orchestrator(cfg, db, notifier)
     console.print("[bold green]shopbot тръгна.[/bold green] Ctrl+C за спиране.")
     try:
-        asyncio.run(orch.run_forever())
+        _run_async(orch.run_forever())
     except KeyboardInterrupt:
         console.print("\nспрян.")
 
@@ -419,7 +428,7 @@ def calibrate(
         finally:
             await session.stop()
 
-    asyncio.run(_run())
+    _run_async(_run())
 
 
 # --------------------------------------------------------------------- debug
@@ -481,7 +490,7 @@ def inspect(
         finally:
             await session.stop()
 
-    asyncio.run(_run())
+    _run_async(_run())
 
 
 @app.command()
@@ -515,7 +524,7 @@ def sync(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
         finally:
             await session.stop()
 
-    asyncio.run(_run())
+    _run_async(_run())
 
 
 if __name__ == "__main__":
