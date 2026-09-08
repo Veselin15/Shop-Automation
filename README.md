@@ -66,11 +66,46 @@ git clone <твоето repo> ~/Shop-Automation && cd ~/Shop-Automation && bash 
 
 ### Локално (Windows, за настройка и тестове)
 
-```bash
-py -3.12 -m venv .venv && .venv\Scripts\pip install -e . && .venv\Scripts\playwright install chromium
+```powershell
+py -3.12 -m venv .venv ; .\.venv\Scripts\pip install -e . ; .\.venv\Scripts\playwright install chromium
 ```
 
-За кирилица в конзолата на Windows: `set PYTHONIOENCODING=utf-8`.
+За кирилица в конзолата на Windows: `$env:PYTHONIOENCODING = "utf-8"`.
+
+### Как се пускат командите
+
+`shopbot` живее вътре във venv-а, не в системния PATH. Затова
+`shopbot login bestsecret` дава *command not found*, ако не си направил едно
+от двете:
+
+**Вариант А — активирай venv-а веднъж на сесия** (после пишеш просто `shopbot`):
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+```bash
+source .venv/bin/activate
+```
+
+**Вариант Б — извикай го с пълния път** (така работи и в скриптове и cron):
+
+```powershell
+.\.venv\Scripts\shopbot.exe status
+```
+
+```bash
+./.venv/bin/shopbot status
+```
+
+Командите по-долу са писани за активиран venv. Пускат се от корена на
+проекта (`Shop-Automation`), не от `src/`.
+
+Ако командата липсва дори при пълен път, пакетът не е инсталиран във venv-а:
+
+```bash
+./.venv/bin/pip install -e .
+```
 
 ---
 

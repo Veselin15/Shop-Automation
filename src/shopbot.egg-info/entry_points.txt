@@ -1,0 +1,2 @@
+[console_scripts]
+shopbot = shopbot.cli:app
