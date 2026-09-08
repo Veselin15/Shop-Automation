@@ -102,18 +102,35 @@ class BazarSink:
         await type_like_human(pwd_field, password)
         await self.pacer.micro_pause()
 
-        # Honeypot-ът остава празен — умишлено не го пипаме.
+        # Honeypot-ът (contact_website, скрит на left:-9999px) остава празен —
+        # умишлено не го пипаме.
         submit = await require_locator(page, self.sel["login_submit"], "бутон за вход")
-        await submit.click()
-        await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(2500)
+
+        # Отговорът на самия POST казва повече от страницата след него:
+        # различаваме "формата не се изпрати" от "сървърът ни отказа".
+        responses: list[str] = []
+
+        def _record(response) -> None:
+            if LOGIN_PATH in response.url and response.request.method == "POST":
+                location = response.headers.get("location", "(без пренасочване)")
+                responses.append(f"HTTP {response.status} -> {location}")
+
+        page.on("response", _record)
+        try:
+            await submit.click()
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(2500)
+        finally:
+            page.remove_listener("response", _record)
 
         if not await self._visit_my_ads(page):
-            detail = await self._login_failure_detail(page)
+            detail = await self._login_failure_detail(page, responses)
             raise AuthWallError(SITE, detail)
         log.info("Bazar.bg: входът мина")
 
-    async def _login_failure_detail(self, page: Page) -> str:
+    async def _login_failure_detail(
+        self, page: Page, responses: list[str] | None = None
+    ) -> str:
         """Събира каквото сайтът казва, за да не гадаем защо входът пада."""
         shot = self.cfg.data_dir / "login_fail_bazar.png"
         try:
@@ -121,9 +138,13 @@ class BazarSink:
         except Exception:
             pass
 
-        message = await self._read_form_error(page)
+        message = await self._read_form_error(page) or await self._form_text(page)
 
         parts = [f"входът не мина, останахме на {page.url}"]
+        if responses:
+            parts.append("отговор на формата: " + "; ".join(responses))
+        elif responses is not None:
+            parts.append("формата изобщо не беше изпратена (няма POST заявка)")
         if message:
             parts.append(f"съобщение от сайта: {message}")
         else:
@@ -136,7 +157,18 @@ class BazarSink:
                 "3) дали не се иска потвърждение по имейл"
             )
         parts.append(f"снимка на екрана: {shot}")
-        return "; ".join(parts)
+        return " | ".join(parts)
+
+    async def _form_text(self, page: Page) -> str:
+        """Текстът на формата — вътре попада и съобщение без познат клас."""
+        try:
+            form = page.locator(self.sel["login_form"]).first
+            if await form.count() == 0:
+                return ""
+            text = (await form.inner_text()).strip()
+            return " ".join(text.split())[:200]
+        except Exception:
+            return ""
 
     # ------------------------------------------------------------ публикуване
 

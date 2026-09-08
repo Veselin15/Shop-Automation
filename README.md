@@ -372,6 +372,17 @@ BestSecret изписва имената по няколко начина — `"
 
 Всички команди са в `~/Shop-Automation`, през venv-а: `./.venv/bin/shopbot ...`
 
+**Командите, които пипат Bazar.bg, се пускат през `xvfb-run`:**
+
+```bash
+SHOPBOT_HEADLESS=0 xvfb-run -a shopbot calibrate bazar
+```
+
+В headless режим Chromium се представя като `HeadlessChrome` в User-Agent и
+част от сайтовете отказват вход без никакво съобщение. Xvfb дава виртуален
+екран, така че върви истински браузър — без да се фалшифицира нищо.
+systemd услугата вече е настроена така.
+
 ```bash
 sudo systemctl status shopbot        # работи ли
 sudo systemctl restart shopbot       # рестарт

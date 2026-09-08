@@ -20,12 +20,14 @@ from playwright.async_api import Error as PlaywrightError
 
 log = logging.getLogger(__name__)
 
-# Реалистичен, стабилен UA. Не се върти на всеки старт — сменящ се UA при
-# същите бисквитки изглежда по-подозрително, отколкото постоянен.
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/128.0.0.0 Safari/537.36"
-)
+# User-Agent НЕ се подменя умишлено.
+#
+# Playwright сменя само заглавието User-Agent, но не и client hints
+# (Sec-CH-UA), които продължават да съобщават истинската версия на Chromium.
+# Подменен UA значи сървърът да види "Chrome/128" в едното и "151" в другото
+# — несъответствие, което е по-силен сигнал за автоматизация, отколкото
+# каквото и да е друго. По-честният вариант е браузърът да се представя
+# такъв, какъвто е.
 
 VIEWPORTS = [(1440, 900), (1536, 864), (1366, 768)]
 
@@ -74,7 +76,6 @@ class BrowserSession:
             self.context = await self._pw.chromium.launch_persistent_context(
                 user_data_dir=str(self.profile_dir),
                 headless=self.headless,
-                user_agent=USER_AGENT,
                 viewport={"width": width, "height": height},
                 locale="bg-BG",
                 timezone_id="Europe/Sofia",

@@ -11,7 +11,7 @@ echo "==> Потребител: $SERVICE_USER"
 
 echo "==> Системни пакети"
 sudo apt-get update -qq
-sudo apt-get install -y python3-venv python3-pip
+sudo apt-get install -y python3-venv python3-pip xvfb
 
 echo "==> Виртуална среда"
 cd "$PROJECT_DIR"

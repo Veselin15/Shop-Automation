@@ -8,8 +8,16 @@ Type=simple
 User=__USER__
 WorkingDirectory=__PROJECT_DIR__
 Environment=PYTHONUNBUFFERED=1
-Environment=SHOPBOT_HEADLESS=1
-ExecStart=__PROJECT_DIR__/.venv/bin/shopbot run
+
+# Пуска се истински Chromium на виртуален дисплей, а не headless.
+# В headless режим User-Agent съдържа "HeadlessChrome" и част от сайтовете
+# отказват вход без съобщение. Xvfb дава екран, без да е нужен монитор.
+Environment=SHOPBOT_HEADLESS=0
+ExecStart=/usr/bin/xvfb-run -a __PROJECT_DIR__/.venv/bin/shopbot run
+
+# Ако xvfb липсва, върни headless режима с тези два реда вместо горните:
+# Environment=SHOPBOT_HEADLESS=1
+# ExecStart=__PROJECT_DIR__/.venv/bin/shopbot run
 Restart=on-failure
 RestartSec=60
 
