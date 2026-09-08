@@ -263,14 +263,55 @@ async def type_like_human(loc: Locator, text: str) -> None:
     await loc.type(text, delay=random.uniform(18, 55))
 
 
-async def dismiss_cookie_banner(page: Page, reject: Sequence[str], accept: Sequence[str]) -> None:
-    """Отказва незадължителните бисквитки, ако има такъв бутон."""
-    for sel in list(reject) + list(accept):
+async def dismiss_cookie_banner(
+    page: Page,
+    reject: Sequence[str],
+    dismiss: Sequence[str] = (),
+    container: str | None = None,
+) -> bool:
+    """Маха банера за бисквитки, като отказва незадължителните.
+
+    Банерът се инжектира със закъснение и прихваща кликовете по цялата
+    страница — без това всяко попълване на форма чака 30 секунди и гърми.
+
+    Чака се самият бутон, а не обвиващият контейнер: обвивката е с нулев
+    размер и Playwright не я смята за видима, така че изчакване по нея
+    излиза веднага и банерът остава.
+
+    "Приемете всички" не се натиска никога; резервният вариант е затваряне.
+    """
+    for sel in list(reject) + list(dismiss):
+        button = page.locator(sel).first
         try:
-            loc = page.locator(sel).first
-            if await loc.count() > 0 and await loc.is_visible():
-                await loc.click(timeout=3000)
-                await page.wait_for_timeout(500)
-                return
+            await button.wait_for(state="visible", timeout=4000)
         except Exception:
             continue
+
+        try:
+            await button.click(timeout=5000)
+        except Exception as exc:
+            log.debug("кликът по %s не мина: %s", sel, exc)
+            continue
+
+        if await _banner_gone(page, button, container):
+            log.info("банерът за бисквитки е затворен (%s)", sel)
+            return True
+
+    log.warning(
+        "банерът за бисквитки не се маха — кликовете по страницата ще се "
+        "прихващат. Обнови cookie_* в config/selectors.yaml."
+    )
+    return False
+
+
+async def _banner_gone(page: Page, button: Locator, container: str | None) -> bool:
+    try:
+        await button.wait_for(state="hidden", timeout=5000)
+    except Exception:
+        return False
+    if container:
+        try:
+            await page.locator(container).first.wait_for(state="detached", timeout=2000)
+        except Exception:
+            pass  # може да остане в DOM-а, стига да не прихваща кликове
+    return True

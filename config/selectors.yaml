@@ -101,10 +101,15 @@ bazar:
     - "a[href*='/user/logout']"
     - "a[href='/ads/my']"
 
-  cookie_accept: []
+  # Bazar.bg ползва CookieScript. Бутоните са DIV-ове, не <button>, затова
+  # текстови селектори по button никога не съвпадат. Банерът се инжектира
+  # след зареждане и прихваща кликовете, докато не бъде затворен.
+  cookie_container: "#cookiescript_injected_wrapper"
   cookie_reject:
-    - "button:has-text('ОТХВЪРЛЕТЕ ВСИЧКИ')"
-    - "#onetrust-reject-all-handler"
+    - "#cookiescript_reject"
+  # Резервно затваряне без приемане. "Приемете всички" не се ползва изобщо.
+  cookie_dismiss:
+    - "#cookiescript_close"
 
   # Формата за нова обява
   form_title:

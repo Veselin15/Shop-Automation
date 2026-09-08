@@ -52,7 +52,10 @@ class BazarSink:
 
     async def _handle_cookies(self, page: Page) -> None:
         await dismiss_cookie_banner(
-            page, self.sel.get("cookie_reject", []), self.sel.get("cookie_accept", [])
+            page,
+            self.sel.get("cookie_reject", []),
+            self.sel.get("cookie_dismiss", []),
+            self.sel.get("cookie_container"),
         )
 
     async def is_logged_in(self, page: Page) -> bool:
