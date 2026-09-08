@@ -1,13 +1,22 @@
 """Публикуване и сваляне на обяви в Bazar.bg.
 
-Реалните адреси (проверени):
-    вход        POST https://bazar.bg/user/login   (полета: email, password)
-    нова обява  https://bazar.bg/ads/save
-    моите обяви https://bazar.bg/ads/my
-    изтриване   https://bazar.bg/ads/delete/<id>
+Реалните адреси (проверени на живо):
+    страница за вход  https://bazar.bg/user/login
+    нова обява        https://bazar.bg/ads/save
+    моите обяви       https://bazar.bg/ads/my
+    изтриване         https://bazar.bg/ads/delete/<id>
 
-Формата за вход съдържа скрито поле `contact_website`. То е honeypot —
-човек не го вижда и не го попълва. Ботът също не бива да го докосва.
+Две неща, които не се виждат от HTML-а и струваха време:
+
+1. **Входът не е form POST.** Формата сочи към /user/login, но кликът върху
+   бутона задейства JavaScript, който вика поредица от API-та и накрая
+   `POST /api/v3_1_0/authentication/login`. Само неговият отговор казва дали
+   входът е приет — страницата изглежда еднакво и при успех, и при отказ.
+   Затова се чака точно тази заявка, а JSON-ът ѝ носи причината на български.
+
+2. **`contact_website` е honeypot** — родителят му е
+   `position:absolute; left:-9999px; aria-hidden="true"`. Човек не го вижда и
+   не го попълва; ботът също не го докосва.
 """
 
 from __future__ import annotations
@@ -17,6 +26,7 @@ import re
 from pathlib import Path
 
 from playwright.async_api import Page
+from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from ..browser import (
     AuthWallError,
@@ -106,22 +116,29 @@ class BazarSink:
         # умишлено не го пипаме.
         submit = await require_locator(page, self.sel["login_submit"], "бутон за вход")
 
-        # Отговорът на самия POST казва повече от страницата след него:
-        # различаваме "формата не се изпрати" от "сървърът ни отказа".
+        # Входът минава през API, не през самата форма: кликът задейства JS,
+        # който вика authentication/login. Само неговият отговор казва дали
+        # входът е приет — страницата остава същата и в двата случая.
+        api_pattern = self.sel.get("login_api_pattern", "authentication/login")
         responses: list[str] = []
 
-        def _record(response) -> None:
-            if LOGIN_PATH in response.url and response.request.method == "POST":
-                location = response.headers.get("location", "(без пренасочване)")
-                responses.append(f"HTTP {response.status} -> {location}")
-
-        page.on("response", _record)
         try:
-            await submit.click()
-            await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(2500)
-        finally:
-            page.remove_listener("response", _record)
+            async with page.expect_response(
+                lambda r: api_pattern in r.url and r.request.method == "POST",
+                timeout=25_000,
+            ) as info:
+                await submit.click()
+            api = await info.value
+            responses.append(f"HTTP {api.status}: {await _api_message(api)}")
+        except PlaywrightTimeout:
+            responses.append(
+                f"кликът не задейства заявка към {api_pattern} за 25 секунди"
+            )
+        except Exception as exc:
+            responses.append(f"отговорът от входа не се прочете: {exc}")
+
+        # JS-ът пренасочва след успешен вход; даваме му време.
+        await page.wait_for_timeout(3000)
 
         if not await self._visit_my_ads(page):
             detail = await self._login_failure_detail(page, responses)
@@ -142,9 +159,7 @@ class BazarSink:
 
         parts = [f"входът не мина, останахме на {page.url}"]
         if responses:
-            parts.append("отговор на формата: " + "; ".join(responses))
-        elif responses is not None:
-            parts.append("формата изобщо не беше изпратена (няма POST заявка)")
+            parts.append("отговор на входа: " + "; ".join(responses))
         if message:
             parts.append(f"съобщение от сайта: {message}")
         else:
@@ -441,3 +456,25 @@ class BazarSink:
             """
         )
         return [str(i) for i in ids if i]
+
+
+async def _api_message(response) -> str:
+    """Човешкото съобщение от API-то за вход.
+
+    Отговорът е JSON с екранирана кирилица (\u0413...); без декодиране
+    грешката е нечетима точно когато най-много трябва да се чете.
+    """
+    try:
+        payload = await response.json()
+    except Exception:
+        try:
+            return " ".join((await response.text())[:300].split())
+        except Exception:
+            return "(отговорът не се прочете)"
+
+    if isinstance(payload, dict):
+        message = payload.get("message") or payload.get("error") or ""
+        extra = [k for k, v in payload.items() if v is True and k != "message"]
+        if message:
+            return f"{message}" + (f" [{', '.join(extra)}]" if extra else "")
+    return " ".join(str(payload)[:300].split())

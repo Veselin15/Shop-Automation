@@ -90,6 +90,9 @@ bazar:
   my_ads_url: https://bazar.bg/ads/my
   delete_url_template: https://bazar.bg/ads/delete/{id}
 
+  # Входът НЕ е обикновен form POST. Кликът пуска JS верига, която накрая
+  # вика този API. Само неговият отговор казва дали входът е минал.
+  login_api_pattern: "authentication/login"
   login_form: "#login-form"
   login_email: "#login-form input[name='email']"
   login_password: "#login-form input[name='password']"
