@@ -47,7 +47,10 @@ class LimitsConfig(BaseModel):
     max_publish_per_day: int = 8
     max_publish_per_run: int = 3
     max_remove_per_day: int = 25
-    max_products_scanned_per_run: int = 120
+    # Плочки за оценка — евтино, само сравнения в паметта.
+    max_tiles_per_run: int = 1500
+    # Отваряния на продуктова страница — това е скъпото и то се лимитира.
+    max_product_pages_per_run: int = 40
     max_active_listings: int = 60
 
 

@@ -37,10 +37,15 @@ log = logging.getLogger(__name__)
 
 SITE = "bestsecret"
 
-# Галерията сервира и миниатюри (_68X84_), и голям кадър (_970X1182_).
-# Един и същ файл, различен размер — вдигаме всичко до големия.
-IMAGE_SIZE_TOKEN = re.compile(r"_\d+X\d+_")
-LARGE_IMAGE = "_970X1182_"
+# Галерията сервира един и същ кадър в няколко размера: _68X84_, _352X429_,
+# _970X1182_. Размерът НЕ може да се пренапише в адреса — хешът в пътя е
+# специфичен за размера и подменен размер връща 404. Затова се взима най-
+# големият вариант, който страницата реално предлага.
+IMAGE_SIZE_TOKEN = re.compile(r"_(\d+)[xX](\d+)_")
+# Кой кадър от галерията е това (…_970X1182_2.jpg -> 2), за да не смятаме
+# два размера на една и съща снимка за две снимки.
+IMAGE_INDEX = re.compile(r"_(\d+)\.(?:jpg|jpeg|png|webp)$", re.IGNORECASE)
+MAX_SCROLLS = 12
 
 BESTSELLER_WORDS = ("bestseller", "best seller", "top", "beliebt", "popular", "хит")
 LOW_STOCK_WORDS = ("only", "last", "few", "nur noch")
@@ -118,16 +123,23 @@ class BestSecretSource:
         return hits
 
     async def _scroll_through(self, page: Page) -> None:
-        """Листингът дозарежда при скрол; без това виждаме само първите плочки."""
+        """Листингът дозарежда при скрол; без това виждаме само първите плочки.
+
+        Спира се чак след няколко поредни еднакви преброявания. Едно
+        съвпадение не значи нищо — дозареждането има забавяне и рано
+        излизане тук струва 100 продукта на страница.
+        """
         selector = self.sel["product_card"][0]
-        previous = 0
-        for _ in range(8):
-            await page.mouse.wheel(0, 2200)
-            await page.wait_for_timeout(700)
+        previous = -1
+        stable = 0
+        for _ in range(MAX_SCROLLS):
+            await page.mouse.wheel(0, 2400)
+            await page.wait_for_timeout(900)
             current = await page.locator(selector).count()
-            if current == previous:
-                break
+            stable = stable + 1 if current == previous else 0
             previous = current
+            if stable >= 2:
+                break
 
     async def _collect_cards(self, page: Page, start_rank: int) -> list[CardHit]:
         raw = await page.evaluate(
@@ -192,7 +204,7 @@ class BestSecretSource:
                     orig_price=orig_price,
                     currency=currency or "EUR",
                     discount_pct=parse_percent(item["discount"]),
-                    image=_large_image(item["image"]),
+                    image=item["image"] or "",
                     bestseller=_has_word(badge, BESTSELLER_WORDS),
                     badge_text=badge,
                 )
@@ -358,27 +370,41 @@ def _product_key(url: str) -> str:
     return product_id_from_url(url)
 
 
-def _large_image(url: str) -> str:
-    """Вдига миниатюрата до голям кадър — същият файл, друг размер в пътя."""
-    if not url or url.startswith("data:"):
-        return ""
-    return IMAGE_SIZE_TOKEN.sub(LARGE_IMAGE, url)
+def _image_area(url: str) -> int:
+    """Площта в пиксели, прочетена от името на файла. 0 = неизвестен размер."""
+    match = IMAGE_SIZE_TOKEN.search(url)
+    return int(match.group(1)) * int(match.group(2)) if match else 0
+
+
+def _image_slot(url: str) -> str:
+    """Кой кадър е това. Всички размери на един кадър делят един слот.
+
+    Взима се само името на файла: пътят съдържа хеш, който е различен за
+    всеки размер, така че адресът като цяло не става за идентичност.
+    """
+    filename = url.split("?")[0].rsplit("/", 1)[-1]
+    return IMAGE_SIZE_TOKEN.sub("_", filename)
 
 
 def _dedupe_images(urls: list[str]) -> list[str]:
-    """Галерията дава един и същ кадър в няколко размера; държим по един."""
-    ordered: list[str] = []
-    seen: set[str] = set()
+    """По един адрес на кадър — този с най-голям размер измежду предложените.
+
+    Подмяна на размера в адреса не работи (хешът е за конкретния размер),
+    затова се избира от това, което страницата вече дава.
+    """
+    best: dict[str, tuple[int, str]] = {}
+    order: list[str] = []
     for raw in urls:
-        big = _large_image(raw)
-        if not big:
+        if not raw or raw.startswith("data:"):
             continue
-        key = big.split("?")[0]
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(big)
-    return ordered
+        slot = _image_slot(raw)
+        area = _image_area(raw)
+        if slot not in best:
+            order.append(slot)
+            best[slot] = (area, raw)
+        elif area > best[slot][0]:
+            best[slot] = (area, raw)
+    return [best[s][1] for s in order]
 
 
 def _has_word(text: str, words: tuple[str, ...]) -> bool:

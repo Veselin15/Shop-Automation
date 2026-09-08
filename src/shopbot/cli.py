@@ -14,6 +14,7 @@ from rich.table import Table
 from .browser import BrowserMissing, BrowserSession, any_present
 from .config import load_config
 from .db import Database
+from .humanize import Pacer
 from .listing import build_listing
 from .notify import (
     Notifier,
@@ -438,8 +439,23 @@ def calibrate(
         await session.start()
         try:
             page = await session.new_page()
+
+            # Без вход /ads/save препраща към /user/login и снимаме грешната
+            # форма — точно това правеше командата досега.
+            if site == "bazar":
+                sink = BazarSink(cfg, session, Pacer(cfg.runtime))
+                await sink.ensure_logged_in(page)
+
             await page.goto(target, wait_until="domcontentloaded")
             await page.wait_for_timeout(2500)
+
+            if site == "bazar" and "user/login" in page.url:
+                console.print(
+                    "[red]Пренасочени сме към страницата за вход.[/red] "
+                    "Провери BAZAR_EMAIL и BAZAR_PASSWORD в .env — снимката "
+                    "нямаше да е на формата за обява."
+                )
+                raise typer.Exit(1)
 
             dump = await page.evaluate(
                 """
@@ -569,8 +585,7 @@ def sync(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
         )
         await session.start()
         try:
-            from .humanize import Pacer
-
+            
             sink = BazarSink(cfg, session, Pacer(cfg.runtime))
             page = await session.new_page()
             await sink.ensure_logged_in(page)

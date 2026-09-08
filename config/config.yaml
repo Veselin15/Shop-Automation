@@ -24,7 +24,10 @@ limits:
   max_publish_per_day: 8
   max_publish_per_run: 3
   max_remove_per_day: 25
-  max_products_scanned_per_run: 120
+  # Плочки за оценка на цикъл — евтино, филтърът работи в паметта.
+  max_tiles_per_run: 1500
+  # Отваряния на продуктова страница — това е скъпото и бавното.
+  max_product_pages_per_run: 40
   max_active_listings: 60
 
 # ------------------------------------------------------------

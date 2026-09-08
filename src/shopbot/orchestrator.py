@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class CycleReport:
     scanned: int = 0
+    opened: int = 0
     new_candidates: int = 0
     published: int = 0
     removed: int = 0
@@ -33,7 +34,8 @@ class CycleReport:
 
     def summary(self) -> str:
         return (
-            f"прегледани {self.scanned}, нови кандидати {self.new_candidates}, "
+            f"прегледани {self.scanned} (отворени {self.opened}), "
+            f"нови кандидати {self.new_candidates}, "
             f"публикувани {self.published}, проверени {self.rechecked}, "
             f"свалени {self.removed}, грешки {len(self.errors)}"
         )
@@ -114,7 +116,10 @@ class Orchestrator:
         session: BrowserSession,
         report: CycleReport,
     ) -> None:
-        budget = self.cfg.limits.max_products_scanned_per_run
+        # Два отделни бюджета. Оценката на плочка е безплатна (вече е в
+        # паметта); скъпото е отварянето на продуктова страница.
+        tile_budget = self.cfg.limits.max_tiles_per_run
+        fetch_budget = self.cfg.limits.max_product_pages_per_run
 
         configured = [c for c in self.cfg.source.categories if c.is_configured]
         if not configured:
@@ -127,7 +132,7 @@ class Orchestrator:
             return
 
         for category in configured:
-            if budget <= 0:
+            if fetch_budget <= 0 or tile_budget <= 0:
                 break
             try:
                 hits = await source.discover(category, page)
@@ -136,18 +141,27 @@ class Orchestrator:
                 continue
 
             for hit in hits:
-                if budget <= 0:
+                if fetch_budget <= 0 or tile_budget <= 0:
                     break
-                budget -= 1
+                tile_budget -= 1
                 report.scanned += 1
+                opened = False
                 try:
-                    await self._consider(source, page, session, hit, category.key, report)
+                    opened = await self._consider(
+                        source, page, session, hit, category.key, report
+                    )
                 except AuthWallError:
                     raise
                 except Exception as exc:
                     log.warning("продукт %s се провали: %s", hit.url, exc)
                     report.errors.append(f"{hit.url}: {exc}")
-                await self.pacer.pause(factor=0.25)
+                    opened = True  # заявката е тръгнала, дължим пауза
+                # Пауза само след реална заявка. Изчакване между две
+                # сравнения в паметта не пази никого и изяжда цикъла.
+                if opened:
+                    fetch_budget -= 1
+                    report.opened += 1
+                    await self.pacer.pause(factor=0.25)
 
     async def _consider(
         self,
@@ -157,8 +171,12 @@ class Orchestrator:
         hit: CardHit,
         category_key: str,
         report: CycleReport,
-    ) -> None:
-        """Един кандидат: оценява от плочката, чете само оцелелите, ценообразува."""
+    ) -> bool:
+        """Един кандидат: оценява от плочката, чете само оцелелите.
+
+        Връща True, ако е отворена продуктова страница — по това се мерят
+        и бюджетът, и паузите.
+        """
         # Плочката вече носи марка, цена, каталожна цена и намаление. Ако
         # продуктът отпада по тях, продуктовата страница изобщо не се отваря —
         # това спестява стотици заявки на цикъл.
@@ -167,15 +185,15 @@ class Orchestrator:
         if not draft_verdict.accepted:
             log.debug("отпада от листинга %s (%s): %s",
                       draft.id, draft.brand, draft_verdict.reason)
-            return
+            return False
 
         existing = self.db.get_listing(draft.id)
         if existing is not None and existing["state"] in ("published", "candidate"):
-            return
+            return False
 
         product = await source.fetch_product(hit.url, category_key, page, hit)
         if product is None:
-            return
+            return True
 
         # Продуктовата страница е по-точна от плочката, затова се преоценява.
         verdict = evaluate(product, self.cfg.selection)
@@ -184,18 +202,18 @@ class Orchestrator:
         if not verdict.accepted:
             log.debug("отпада от страницата %s (%s): %s",
                       product.id, product.brand, verdict.reason)
-            return
+            return True
 
         price = compute_price(product, self.cfg.pricing)
         if price.rejected:
             log.info("отпада по цена %s: %s", product.id, price.rejected)
             self.db.log_event("price_reject", price.rejected, product.id)
-            return
+            return True
 
         category_path = self.cfg.listing.category_map.get(category_key, [])
         if not category_path:
             log.warning("няма Bazar.bg категория за '%s' — пропускам", category_key)
-            return
+            return True
 
         listing = build_listing(product, price, self.cfg.listing, category_path)
 
@@ -210,7 +228,7 @@ class Orchestrator:
         if not images:
             log.info("без валидни снимки, отпада: %s", product.id)
             self.db.log_event("no_images", product.url, product.id)
-            return
+            return True
 
         self.db.save_candidate(listing)
         report.new_candidates += 1
@@ -222,6 +240,7 @@ class Orchestrator:
             format_money(price.cost, price.currency),
             format_money(price.margin, price.currency),
         )
+        return True
 
     async def _recheck_published(
         self,

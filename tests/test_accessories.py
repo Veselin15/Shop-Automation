@@ -11,7 +11,7 @@ from shopbot.listing import build_description, label_to_path, path_to_label
 from shopbot.models import Product, Size
 from shopbot.pricing import compute_price
 from shopbot.selection import evaluate
-from shopbot.sources.bestsecret import _paged_url
+from shopbot.sources.bestsecret import _dedupe_images, _image_area, _paged_url
 
 
 def accessory(**overrides):
@@ -218,3 +218,40 @@ def test_paged_url_keeps_existing_filters():
 def test_paged_url_without_query():
     assert _paged_url("https://x.com/a.htm", 1) == "https://x.com/a.htm"
     assert _paged_url("https://x.com/a.htm", 3).endswith("?page=3")
+
+
+# ------------------------------------------------------- снимки
+
+IMG = "https://image.bestsecret.com/40564711__000889193/{h}/image_40564711__000889193_{size}_{i}.jpg"
+
+
+def test_gallery_keeps_the_largest_variant_of_each_frame():
+    """Всеки кадър идва в няколко размера, всеки със собствен хеш в пътя."""
+    urls = [
+        IMG.format(h="aaa", size="68X84", i=1),
+        IMG.format(h="bbb", size="970X1182", i=1),
+        IMG.format(h="ccc", size="352X429", i=2),
+        IMG.format(h="ddd", size="970X1182", i=2),
+    ]
+    result = _dedupe_images(urls)
+    assert len(result) == 2, "два кадъра, не четири снимки"
+    assert all("970X1182" in u for u in result)
+    assert "bbb" in result[0] and "ddd" in result[1], "хешът трябва да е този на големия"
+
+
+def test_size_token_is_never_rewritten():
+    """Подмяна на размера в адреса дава 404 — хешът е за конкретния размер."""
+    only_small = [IMG.format(h="aaa", size="68X84", i=1)]
+    assert _dedupe_images(only_small) == only_small
+
+
+def test_lowercase_size_token_is_understood():
+    """Вторият CDN на BestSecret пише размера с малки букви."""
+    small = "https://picture.bestsecret.com/static/images/3357/image_x_68x84_0.jpg"
+    big = "https://picture.bestsecret.com/static/images/3357/image_x_970x1182_0.jpg"
+    assert _image_area(small) == 68 * 84
+    assert _dedupe_images([small, big]) == [big]
+
+
+def test_data_uris_are_dropped():
+    assert _dedupe_images(["data:image/png;base64,iVBOR", ""]) == []
