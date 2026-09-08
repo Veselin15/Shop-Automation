@@ -280,12 +280,14 @@ async def dismiss_cookie_banner(
 
     "Приемете всички" не се натиска никога; резервният вариант е затваряне.
     """
+    found_any = False
     for sel in list(reject) + list(dismiss):
         button = page.locator(sel).first
         try:
             await button.wait_for(state="visible", timeout=4000)
         except Exception:
             continue
+        found_any = True
 
         try:
             await button.click(timeout=5000)
@@ -297,8 +299,13 @@ async def dismiss_cookie_banner(
             log.info("банерът за бисквитки е затворен (%s)", sel)
             return True
 
+    if not found_any:
+        # Най-често просто вече е отказан и бисквитката за избора е запазена.
+        log.debug("няма банер за бисквитки на %s", page.url)
+        return False
+
     log.warning(
-        "банерът за бисквитки не се маха — кликовете по страницата ще се "
+        "банерът за бисквитки е на екрана, но не се маха — кликовете ще се "
         "прихващат. Обнови cookie_* в config/selectors.yaml."
     )
     return False

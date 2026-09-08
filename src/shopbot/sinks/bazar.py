@@ -35,6 +35,7 @@ from ..models import Listing
 log = logging.getLogger(__name__)
 
 SITE = "bazar"
+LOGIN_PATH = "/user/login"
 
 
 class PublishError(RuntimeError):
@@ -59,13 +60,28 @@ class BazarSink:
         )
 
     async def is_logged_in(self, page: Page) -> bool:
-        return await any_present(page, self.sel.get("logged_in_markers"))
+        """Решава се по URL-а, не по CSS.
 
-    async def ensure_logged_in(self, page: Page) -> None:
+        Bazar.bg препраща излезлите от /ads/my към /user/login?back=... —
+        поведение на сайта, което не се чупи при редизайн. DOM маркерите
+        остават като допълнителна мрежа.
+        """
+        if LOGIN_PATH in page.url:
+            return False
+        if await any_present(page, self.sel.get("logged_in_markers")):
+            return True
+        # Стигнали сме до "моите обяви" без да ни изхвърлят — значи сме вътре.
+        return self.sel["my_ads_url"].rstrip("/") in page.url
+
+    async def _visit_my_ads(self, page: Page) -> bool:
+        """Отваря "моите обяви" и връща дали сме допуснати."""
         await page.goto(self.sel["my_ads_url"], wait_until="domcontentloaded")
         await self._handle_cookies(page)
+        await page.wait_for_timeout(800)
+        return await self.is_logged_in(page)
 
-        if await self.is_logged_in(page):
+    async def ensure_logged_in(self, page: Page) -> None:
+        if await self._visit_my_ads(page):
             log.info("Bazar.bg: вече сме логнати")
             return
 
@@ -92,12 +108,35 @@ class BazarSink:
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(2500)
 
-        if not await self.is_logged_in(page):
-            raise AuthWallError(
-                SITE,
-                "входът не мина — грешни данни, CAPTCHA или потвърждение по имейл",
-            )
+        if not await self._visit_my_ads(page):
+            detail = await self._login_failure_detail(page)
+            raise AuthWallError(SITE, detail)
         log.info("Bazar.bg: входът мина")
+
+    async def _login_failure_detail(self, page: Page) -> str:
+        """Събира каквото сайтът казва, за да не гадаем защо входът пада."""
+        shot = self.cfg.data_dir / "login_fail_bazar.png"
+        try:
+            await page.screenshot(path=str(shot), full_page=True)
+        except Exception:
+            pass
+
+        message = await self._read_form_error(page)
+
+        parts = [f"входът не мина, останахме на {page.url}"]
+        if message:
+            parts.append(f"съобщение от сайта: {message}")
+        else:
+            # Няма съобщение на страницата — най-честите причини по ред на
+            # вероятност, за да не се гадае.
+            parts.append(
+                "страницата не казва защо. Провери: 1) паролата в .env; "
+                "2) дали профилът не е само през Google (тогава директна "
+                "парола няма — направи си такава от Bazar.bg); "
+                "3) дали не се иска потвърждение по имейл"
+            )
+        parts.append(f"снимка на екрана: {shot}")
+        return "; ".join(parts)
 
     # ------------------------------------------------------------ публикуване
 
