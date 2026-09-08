@@ -73,7 +73,7 @@ class BestSecretSource:
 
     async def _guard(self, page: Page) -> None:
         """Вдига AuthWallError, ако сме изхвърлени пред вратата."""
-        if await any_present(page, self.sel.get("auth_wall_markers")):
+        if not await looks_logged_in(page, self.sel):
             raise AuthWallError(SITE, f"login wall на {page.url}")
 
     async def ensure_session(self, page: Page) -> None:
@@ -306,6 +306,19 @@ class BestSecretSource:
 
 
 # ---------------------------------------------------------------- помощни
+
+
+async def looks_logged_in(page: Page, sel: dict) -> bool:
+    """Логнати ли сме в BestSecret.
+
+    Проверява се първо по URL: излезлите се препращат към
+    /acquisition/entrance. Това е поведение на сайта, а не CSS клас, затова
+    не се чупи при редизайн. DOM маркерите са допълнителна мрежа.
+    """
+    pattern = sel.get("auth_wall_url_pattern", "acquisition/entrance")
+    if pattern and pattern in page.url:
+        return False
+    return not await any_present(page, sel.get("auth_wall_markers"))
 
 
 def _paged_url(base: str, page_no: int, sort_query: str = "") -> str:

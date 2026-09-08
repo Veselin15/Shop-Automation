@@ -153,18 +153,25 @@ shopbot login bestsecret
 ключ на операционната система (DPAPI под Windows) и профил от Windows не се
 чете от Linux. Използвай преносимия JSON:
 
+`shopbot login` **сам изнася** сесията в `data/sessions/bestsecret.json`, още
+докато браузърът е отворен. Това не е дреболия: входът в BestSecret е
+*session cookie* — без срок на валидност, тя живее само в паметта на браузъра
+и изчезва при затварянето му. Затова отделен `export-session` след това би
+хванал само трайните бисквитки (език, държава) и сесията би изглеждала празна.
+
 ```bash
-# на компютъра ти, след като си влязъл
-shopbot export-session bestsecret
-
-# после
 scp data/sessions/bestsecret.json veski4a@192.168.0.101:~/Shop-Automation/
+```
 
-# на сървъра
+```bash
 ./.venv/bin/shopbot import-session bestsecret --file ~/Shop-Automation/bestsecret.json
 ```
 
 `import-session` веднага проверява дали сесията работи и казва, ако не.
+
+Този JSON е и източникът на истината при всяко пускане — ботът го влива в
+профила преди всеки цикъл. Сесията все пак изтича след време; тогава
+получаваш 🔐 в Telegram и повтаряш `login` + пренасяне.
 
 Ако все пак имаш X сървър на Windows (VcXsrv, MobaXterm), можеш и направо:
 `ssh -X veski4a@192.168.0.101` и `./.venv/bin/shopbot login bestsecret`.

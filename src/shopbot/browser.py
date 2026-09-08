@@ -50,10 +50,19 @@ class BrowserMissing(RuntimeError):
 class BrowserSession:
     """Един постоянен профил (бисквитки + localStorage) на диска."""
 
-    def __init__(self, name: str, profile_dir: Path, headless: bool = True) -> None:
+    def __init__(
+        self,
+        name: str,
+        profile_dir: Path,
+        headless: bool = True,
+        seed_state: Path | None = None,
+    ) -> None:
         self.name = name
         self.profile_dir = profile_dir
         self.headless = headless
+        # JSON с изнесена сесия, който се влива при всяко пускане. Нужен е,
+        # защото сесийните бисквитки не преживяват затварянето на браузъра.
+        self.seed_state = seed_state
         self._pw: Any = None
         self.context: BrowserContext | None = None
 
@@ -88,7 +97,24 @@ class BrowserSession:
                 ) from None
             raise
         self.context.set_default_timeout(30_000)
+
+        if self.seed_state and self.seed_state.exists():
+            try:
+                await self.seed_cookies(self.seed_state)
+            except Exception as exc:
+                log.warning("сесията от %s не се вля: %s", self.seed_state, exc)
+
         return self.context
+
+    async def seed_cookies(self, source: Path) -> int:
+        """Влива само бисквитките от изнесена сесия. Без навигация, евтино е."""
+        assert self.context, "сесията не е стартирана"
+        state = json.loads(source.read_text(encoding="utf-8"))
+        cookies = state.get("cookies", [])
+        if cookies:
+            await self.context.add_cookies(cookies)
+            log.info("вляти %d бисквитки от %s", len(cookies), source.name)
+        return len(cookies)
 
     async def stop(self) -> None:
         if self.context:

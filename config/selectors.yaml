@@ -13,6 +13,9 @@
 bestsecret:
   # Страницата зад "iron door"-а. Ако след зареждане видим това,
   # значи сесията е изтекла и трябва ръчен вход.
+  # Най-сигурният признак: BestSecret препраща излезлите към "желязната
+  # врата". URL проверка не зависи от CSS класове и не остарява.
+  auth_wall_url_pattern: "acquisition/entrance"
   auth_wall_markers:
     - "#login-button"
     - "form[action*='acquisition/entrance']"

@@ -187,6 +187,19 @@ class Config(BaseModel):
     def profiles_dir(self) -> Path:
         return self.data_dir / "profiles"
 
+    @property
+    def sessions_dir(self) -> Path:
+        return self.data_dir / "sessions"
+
+    def session_file(self, site: str) -> Path:
+        """Изнесената сесия за сайта.
+
+        Тя, а не профилът на Chromium, е източникът на истината: входът в
+        BestSecret е session cookie, която живее само в паметта и изчезва при
+        затваряне на браузъра. Профилът я губи, JSON-ът я пази.
+        """
+        return self.sessions_dir / f"{site}.json"
+
 
 def load_config(
     path: Path | str | None = None, selectors_path: Path | str | None = None

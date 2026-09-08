@@ -26,7 +26,7 @@ from .orchestrator import Orchestrator
 from .pricing import compute_price, format_money
 from .selection import evaluate
 from .sinks.bazar import BazarSink
-from .sources.bestsecret import BestSecretSource
+from .sources.bestsecret import BestSecretSource, looks_logged_in
 
 app = typer.Typer(add_completion=False, help="BestSecret -> Bazar.bg автоматизация")
 console = Console()
@@ -48,6 +48,13 @@ def _run_async(coro):
     except BrowserMissing as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from None
+
+
+async def _session_valid(site: str, page, cfg) -> bool:
+    """Логнати ли сме. За BestSecret решава URL-ът, за Bazar.bg — DOM маркер."""
+    if site == "bestsecret":
+        return await looks_logged_in(page, cfg.selectors["bestsecret"])
+    return await any_present(page, cfg.selectors["bazar"].get("logged_in_markers"))
 
 
 def _ctx():
@@ -90,21 +97,25 @@ def login(
             )
             typer.prompt("Натисни Enter, когато си вътре", default="", show_default=False)
 
-            markers = (
-                cfg.selectors["bestsecret"].get("logged_in_markers")
-                if site == "bestsecret"
-                else cfg.selectors["bazar"].get("logged_in_markers")
-            )
-            ok = await any_present(page, markers)
-            if ok:
-                console.print("[green]Сесията е записана.[/green]")
-                db.log_event("login", f"{site}: ръчен вход")
+            # Изнасяме ВЕДНАГА, още докато браузърът е отворен. Входът в
+            # BestSecret е session cookie — живее само в паметта и се губи
+            # при затваряне, така че по-късен export-session хваща само
+            # трайните бисквитки и сесията изглежда празна.
+            state_file = await session.export_state(cfg.session_file(site))
+
+            n_cookies = len(json.loads(state_file.read_text(encoding="utf-8"))["cookies"])
+            if await _session_valid(site, page, cfg):
+                console.print(
+                    f"[green]Сесията е записана[/green] ({n_cookies} бисквитки)."
+                )
+                db.log_event("login", f"{site}: ръчен вход, {n_cookies} бисквитки")
             else:
                 console.print(
-                    "[yellow]Не разпознавам маркер за логнат профил.[/yellow] "
-                    "Сесията все пак е запазена; ако не тръгне, оправи "
-                    "logged_in_markers в config/selectors.yaml."
+                    "[yellow]Изглежда още не си влязъл.[/yellow] Сесията е запазена, "
+                    "но сайтът още те смята за гост. Пусни командата пак и изчакай "
+                    "входа да завърши, преди да натиснеш Enter."
                 )
+            console.print(f"Изнесена сесия: {state_file}")
         finally:
             await session.stop()
 
@@ -124,10 +135,13 @@ def export_session(
     """
     setup_logging(verbose)
     cfg, _, _ = _ctx()
-    dest = Path(out) if out else cfg.data_dir / "sessions" / f"{site}.json"
+    dest = Path(out) if out else cfg.session_file(site)
 
     async def _run() -> None:
-        session = BrowserSession(site, cfg.profiles_dir / site, headless=True)
+        session = BrowserSession(
+            site, cfg.profiles_dir / site, headless=True,
+            seed_state=cfg.session_file(site),
+        )
         await session.start()
         try:
             path = await session.export_state(dest)
@@ -157,7 +171,10 @@ def import_session(
         raise typer.BadParameter(f"няма такъв файл: {source}")
 
     async def _run() -> None:
-        session = BrowserSession(site, cfg.profiles_dir / site, headless=True)
+        session = BrowserSession(
+            site, cfg.profiles_dir / site, headless=True,
+            seed_state=cfg.session_file(site),
+        )
         await session.start()
         try:
             cookies, origins = await session.import_state(source)
@@ -172,8 +189,7 @@ def import_session(
             await page.goto(check_url, wait_until="domcontentloaded")
             await page.wait_for_timeout(2000)
 
-            markers = cfg.selectors[site].get("logged_in_markers")
-            if await any_present(page, markers):
+            if await _session_valid(site, page, cfg):
                 console.print("[green]Сесията работи — профилът е логнат.[/green]")
                 db.log_event("login", f"{site}: внесена сесия")
             else:
@@ -376,7 +392,10 @@ def calibrate(
     )
 
     async def _run() -> None:
-        session = BrowserSession(site, cfg.profiles_dir / site, headless=cfg.runtime.headless)
+        session = BrowserSession(
+            site, cfg.profiles_dir / site, headless=cfg.runtime.headless,
+            seed_state=cfg.session_file(site),
+        )
         await session.start()
         try:
             page = await session.new_page()
@@ -446,7 +465,8 @@ def inspect(
 
     async def _run() -> None:
         session = BrowserSession(
-            "bestsecret", cfg.profiles_dir / "bestsecret", cfg.runtime.headless
+            "bestsecret", cfg.profiles_dir / "bestsecret", cfg.runtime.headless,
+            seed_state=cfg.session_file("bestsecret"),
         )
         await session.start()
         try:
@@ -504,7 +524,10 @@ def sync(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     cfg, db, _ = _ctx()
 
     async def _run() -> None:
-        session = BrowserSession("bazar", cfg.profiles_dir / "bazar", cfg.runtime.headless)
+        session = BrowserSession(
+            "bazar", cfg.profiles_dir / "bazar", cfg.runtime.headless,
+            seed_state=cfg.session_file("bazar"),
+        )
         await session.start()
         try:
             from .humanize import Pacer

@@ -91,7 +91,8 @@ class Orchestrator:
 
     async def _source_phase(self, report: CycleReport, discover: bool, reconcile: bool) -> None:
         session = BrowserSession(
-            "bestsecret", self.cfg.profiles_dir / "bestsecret", self.cfg.runtime.headless
+            "bestsecret", self.cfg.profiles_dir / "bestsecret", self.cfg.runtime.headless,
+            seed_state=self.cfg.session_file("bestsecret"),
         )
         await session.start()
         try:
@@ -252,7 +253,8 @@ class Orchestrator:
             return
 
         session = BrowserSession(
-            "bazar", self.cfg.profiles_dir / "bazar", self.cfg.runtime.headless
+            "bazar", self.cfg.profiles_dir / "bazar", self.cfg.runtime.headless,
+            seed_state=self.cfg.session_file("bazar"),
         )
         await session.start()
         try:
