@@ -350,6 +350,45 @@ def status() -> None:
 
 
 @app.command()
+def candidates(limit: int = typer.Option(30, "--limit")) -> None:
+    """Какво чака да бъде публикувано, с марж — прегледай преди да пуснеш бота.
+
+    Пълни се от `shopbot once --no-publish`, което обхожда BestSecret, но не
+    пипа Bazar.bg.
+    """
+    cfg, db, _ = _ctx()
+    rows = db.pending_candidates(limit)
+    if not rows:
+        console.print(
+            "Опашката е празна. Напълни я с [bold]shopbot once --no-publish[/bold]."
+        )
+        return
+
+    table = Table(title=f"кандидати ({len(rows)})")
+    table.add_column("марка")
+    table.add_column("заглавие", overflow="fold")
+    table.add_column("нам.", justify="right")
+    table.add_column("цена", justify="right")
+    table.add_column("марж", justify="right")
+    table.add_column("скор", justify="right")
+
+    for row in rows:
+        product = db.get_product(row["product_id"])
+        if product is None:
+            continue
+        price = compute_price(product, cfg.pricing)
+        table.add_row(
+            product.brand[:18],
+            row["title"][:44],
+            f"{product.discount_pct}%",
+            format_money(price.final, price.currency),
+            format_money(price.margin, price.currency),
+            f"{row['score']:.2f}",
+        )
+    console.print(table)
+
+
+@app.command()
 def listings() -> None:
     """Активните обяви и връзката им с източника."""
     _, db, _ = _ctx()

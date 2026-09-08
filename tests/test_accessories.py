@@ -21,7 +21,7 @@ def accessory(**overrides):
         "url": "http://x/1",
         "brand": "Guess",
         "name": "Слънчеви очила",
-        "category_key": "sunglasses",
+        "category_key": "sunglasses_women",
         "price": 60.0,
         "orig_price": 240.0,
         "images": ["a.jpg", "b.jpg"],
@@ -147,7 +147,7 @@ def test_sixty_five_percent_discount_is_not_enough(real):
 
 def test_pricing_keeps_a_worthwhile_margin_on_cheap_accessories(real):
     """Ключодържател за 30 € трябва да носи поне минималния марж."""
-    product = accessory(category_key="keychains", price=30.0, orig_price=150.0)
+    product = accessory(category_key="small_accessories_women", price=30.0, orig_price=150.0)
     price = compute_price(product, real.pricing)
     assert not price.rejected, price.rejected
     assert price.margin >= real.pricing.min_absolute_margin
@@ -176,6 +176,14 @@ def test_description_has_no_leftover_placeholders(real):
     price = compute_price(product, real.pricing)
     text = build_description(product, price, real.listing)
     assert "{" not in text and "}" not in text
+
+
+def test_markup_keys_match_real_category_keys(real):
+    """Ключ с печатна грешка мълчаливо пада към default_markup — оттам идват
+    сгрешени цени, които никой не забелязва."""
+    known = {c.key for c in real.source.categories}
+    unknown = set(real.pricing.markup_by_category) - known
+    assert not unknown, f"markup_by_category сочи несъществуващи категории: {unknown}"
 
 
 def test_every_source_category_has_a_bazar_category(real):

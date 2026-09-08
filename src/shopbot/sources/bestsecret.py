@@ -2,65 +2,66 @@
 
 Сайтът е изцяло зад вход ("iron door" на /acquisition/entrance), затова тук
 няма логика за автоматично логване с парола — първият вход се прави ръчно
-(`shopbot login bestsecret`) и профилът се пази на диска. Ако сесията падне,
+(`shopbot login bestsecret`) и сесията се пази като JSON. Ако сесията падне,
 модулът вдига AuthWallError и ботът спира да пипа този сайт, вместо да блъска
 формата за вход.
 
-Извличането на данни минава през три нива, в този ред:
-  1. JSON-LD (schema.org Product) — стабилно, не зависи от CSS класове
-  2. вграден JSON в страницата (__NEXT_DATA__ / __INITIAL_STATE__)
-  3. CSS селектори от config/selectors.yaml
+Две неща, проверени на живо в логнат профил, определят целия модул:
+
+1. **Плочката в листинга носи всичко за подбора** — марка, име, каталожна
+   цена, процент намаление и цена. Затова се филтрира още там и продуктовата
+   страница се отваря само за оцелелите. Разликата е между 20 и 400 отваряния
+   на цикъл.
+
+2. **Страницата показва едновременно EUR и BGN**, а извън основния продукт
+   стои мини-кошница със свои `.rrp` / `.sold-price` / `.discount-tag`. Всяко
+   четене е ограничено до `.main-prices` вътре в корена на продукта; иначе се
+   вадят чужди числа. (JSON-LD няма — проверено.)
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from dataclasses import dataclass
-from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+import re
+from dataclasses import dataclass, field
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from playwright.async_api import Page
 
-from ..browser import (
-    AuthWallError,
-    BrowserSession,
-    any_present,
-    text_of,
-)
+from ..browser import AuthWallError, BrowserSession, any_present
 from ..config import Config, SourceCategory
 from ..models import Product, ProductStatus, Size
-from ..parsing import clean, parse_money, product_id_from_url
+from ..parsing import clean, parse_money, parse_percent, product_id_from_url
 
 log = logging.getLogger(__name__)
 
 SITE = "bestsecret"
 
-JSONLD_SCRIPT = """
-() => Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
-    .map(s => s.textContent).filter(Boolean)
-"""
+# Галерията сервира и миниатюри (_68X84_), и голям кадър (_970X1182_).
+# Един и същ файл, различен размер — вдигаме всичко до големия.
+IMAGE_SIZE_TOKEN = re.compile(r"_\d+X\d+_")
+LARGE_IMAGE = "_970X1182_"
 
-EMBEDDED_SCRIPT = """
-() => {
-  const keys = ['__NEXT_DATA__', '__INITIAL_STATE__', '__PRELOADED_STATE__', 'dataLayer'];
-  const out = {};
-  for (const k of keys) {
-    try { if (window[k]) out[k] = JSON.parse(JSON.stringify(window[k])); } catch (e) {}
-  }
-  return out;
-}
-"""
+BESTSELLER_WORDS = ("bestseller", "best seller", "top", "beliebt", "popular", "хит")
+LOW_STOCK_WORDS = ("only", "last", "few", "nur noch")
 
 
 @dataclass(slots=True)
 class CardHit:
-    """Каквото се вижда още от листинга, преди да отворим продукта."""
+    """Каквото плочката в листинга дава, преди да отворим продукта."""
 
     url: str
     rank: int
+    brand: str = ""
+    name: str = ""
+    price: float = 0.0
+    orig_price: float = 0.0
+    currency: str = "EUR"
+    discount_pct: int = 0
+    image: str = ""
     bestseller: bool = False
     badge_text: str = ""
+    tags: list[str] = field(default_factory=list)
 
 
 class BestSecretSource:
@@ -117,54 +118,104 @@ class BestSecretSource:
         return hits
 
     async def _scroll_through(self, page: Page) -> None:
-        """Много листинги дозареждат при скрол; без това виждаме само първите."""
-        for _ in range(6):
-            await page.mouse.wheel(0, 1800)
+        """Листингът дозарежда при скрол; без това виждаме само първите плочки."""
+        selector = self.sel["product_card"][0]
+        previous = 0
+        for _ in range(8):
+            await page.mouse.wheel(0, 2200)
             await page.wait_for_timeout(700)
+            current = await page.locator(selector).count()
+            if current == previous:
+                break
+            previous = current
 
     async def _collect_cards(self, page: Page, start_rank: int) -> list[CardHit]:
-        selectors = self.sel.get("product_card", [])
-        badge_selectors = self.sel.get("card_badge", [])
-
-        result = await page.evaluate(
+        raw = await page.evaluate(
             """
-            ([cardSels, badgeSels]) => {
-              let cards = [];
-              for (const sel of cardSels) {
-                const found = Array.from(document.querySelectorAll(sel));
-                if (found.length > cards.length) cards = found;
-              }
-              return cards.map(c => {
-                const a = c.tagName === 'A' ? c : c.querySelector('a[href]');
-                let badge = '';
-                for (const bs of badgeSels) {
-                  const b = c.querySelector(bs);
-                  if (b && b.textContent.trim()) { badge = b.textContent.trim(); break; }
+            (sel) => {
+              const pick = (root, sels) => {
+                for (const s of sels || []) {
+                  const el = root.querySelector(s);
+                  if (el && (el.textContent || '').trim()) return el.textContent.trim();
                 }
-                return { href: a ? a.href : null, badge };
+                return '';
+              };
+              let tiles = [];
+              for (const s of sel.product_card) {
+                const found = document.querySelectorAll(s);
+                if (found.length) { tiles = [...found]; break; }
+              }
+              return tiles.map(t => {
+                const a = t.querySelector(sel.card_link[0]) || t.querySelector('a[href]');
+                let img = '';
+                for (const s of sel.card_image || []) {
+                  const el = t.querySelector(s);
+                  if (el) img = el.currentSrc || el.src || el.getAttribute('data-src') || '';
+                  if (img) break;
+                }
+                return {
+                  href: a ? a.href : null,
+                  brand: pick(t, sel.card_brand),
+                  name: pick(t, sel.card_name),
+                  rrp: pick(t, sel.card_rrp),
+                  price: pick(t, sel.card_price),
+                  discount: pick(t, sel.card_discount),
+                  badge: pick(t, sel.card_badge),
+                  image: img,
+                };
               }).filter(x => x.href);
             }
             """,
-            [selectors, badge_selectors],
+            self.sel,
         )
 
         hits: list[CardHit] = []
         seen: set[str] = set()
-        for i, item in enumerate(result):
-            href = item["href"].split("?")[0]
-            if href in seen:
+        for i, item in enumerate(raw):
+            href = item["href"].split("#")[0]
+            key = _product_key(href)
+            if key in seen:
                 continue
-            seen.add(href)
+            seen.add(key)
+
+            price, currency = parse_money(item["price"])
+            orig_price, _ = parse_money(item["rrp"])
             badge = clean(item.get("badge", ""))
+
             hits.append(
                 CardHit(
                     url=href,
                     rank=start_rank + i,
-                    bestseller=_is_bestseller_badge(badge),
+                    brand=clean(item["brand"]),
+                    name=clean(item["name"]),
+                    price=price,
+                    orig_price=orig_price,
+                    currency=currency or "EUR",
+                    discount_pct=parse_percent(item["discount"]),
+                    image=_large_image(item["image"]),
+                    bestseller=_has_word(badge, BESTSELLER_WORDS),
                     badge_text=badge,
                 )
             )
         return hits
+
+    def product_from_card(self, hit: CardHit, category_key: str) -> Product:
+        """Черновата от плочката — стига за подбора, без да отваряме продукта."""
+        return Product(
+            id=_product_key(hit.url),
+            url=hit.url,
+            brand=hit.brand,
+            name=hit.name,
+            category_key=category_key,
+            price=hit.price,
+            orig_price=hit.orig_price,
+            currency=hit.currency,
+            images=[hit.image] if hit.image else [],
+            sizes=[],
+            bestseller_badge=hit.bestseller,
+            low_stock=_has_word(hit.badge_text, LOW_STOCK_WORDS),
+            listing_rank=hit.rank,
+        )
 
     # ------------------------------------------------------------- продукт
 
@@ -173,7 +224,7 @@ class BestSecretSource:
     ) -> Product | None:
         """Отваря продуктовата страница и сглобява Product. None = вече го няма."""
         resp = await page.goto(url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(1200)
+        await page.wait_for_timeout(1500)
 
         if resp is not None and resp.status in (404, 410):
             log.info("BestSecret: %s връща %s — продуктът е свален", url, resp.status)
@@ -181,20 +232,82 @@ class BestSecretSource:
 
         await self._guard(page)
 
-        product = Product(id=product_id_from_url(url), url=url, category_key=category_key)
+        data = await page.evaluate(
+            """
+            (sel) => {
+              let root = null;
+              for (const s of sel.pdp_root) { root = document.querySelector(s); if (root) break; }
+              if (!root) return null;
+              const doc = root.ownerDocument;
+              const pick = sels => {
+                for (const s of sels || []) {
+                  const el = root.querySelector(s);
+                  if (el && (el.textContent || '').trim()) return el.textContent.trim();
+                }
+                return '';
+              };
+              const sizes = [];
+              for (const s of sel.pdp_sizes || []) {
+                const nodes = doc.querySelectorAll(s);
+                if (!nodes.length) continue;
+                for (const n of nodes) {
+                  const label = (n.textContent || n.value || '').trim();
+                  if (!label) continue;
+                  const cls = (n.className || '') + ' ' + (n.getAttribute('aria-label') || '');
+                  sizes.push({
+                    label,
+                    available: !(n.hasAttribute('disabled')
+                      || n.getAttribute('aria-disabled') === 'true'
+                      || /disabled|sold[-_ ]?out|unavailable/i.test(cls)),
+                  });
+                }
+                break;
+              }
+              const images = [];
+              for (const s of sel.pdp_images || []) {
+                for (const img of doc.querySelectorAll(s)) {
+                  const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+                  if (src && !src.startsWith('data:')) images.push(src);
+                }
+                if (images.length) break;
+              }
+              return {
+                brand: pick(sel.pdp_brand),
+                name: pick(sel.pdp_title),
+                price: pick(sel.pdp_price),
+                rrp: pick(sel.pdp_orig_price),
+                discount: pick(sel.pdp_discount),
+                description: pick(sel.pdp_description).slice(0, 1200),
+                sizes, images,
+              };
+            }
+            """,
+            self.sel,
+        )
 
-        ld = await self._read_jsonld(page)
-        if ld:
-            _apply_jsonld(product, ld)
+        if not data or not data["name"]:
+            log.warning("BestSecret: не мога да прочета %s — провери pdp_* селекторите", url)
+            return None
 
-        if not product.name or product.price <= 0:
-            await self._apply_dom(page, product)
+        price, currency = parse_money(data["price"])
+        orig_price, _ = parse_money(data["rrp"])
 
-        if not product.images:
-            product.images = await self._collect_images(page)
-
-        if not product.sizes:
-            product.sizes = await self._collect_sizes(page)
+        product = Product(
+            id=_product_key(url),
+            url=url,
+            brand=clean(data["brand"]),
+            name=clean(data["name"]),
+            category_key=category_key,
+            price=price,
+            orig_price=orig_price,
+            currency=currency or "EUR",
+            description=clean(data["description"]),
+            images=_dedupe_images(data["images"]),
+            sizes=[
+                Size(label=clean(s["label"])[:12], available=bool(s["available"]))
+                for s in data["sizes"]
+            ],
+        )
 
         product.low_stock = await any_present(page, self.sel.get("pdp_low_stock_markers"))
         sold_out = await any_present(page, self.sel.get("pdp_sold_out_markers"))
@@ -202,6 +315,8 @@ class BestSecretSource:
         if hit is not None:
             product.bestseller_badge = hit.bestseller
             product.listing_rank = hit.rank
+            if product.orig_price <= 0:
+                product.orig_price = hit.orig_price
 
         if sold_out or (product.sizes and not product.available_sizes):
             product.status = ProductStatus.SOLD_OUT
@@ -210,99 +325,7 @@ class BestSecretSource:
         else:
             product.status = ProductStatus.AVAILABLE
 
-        if not product.name:
-            log.warning("BestSecret: не мога да прочета %s — провери селекторите", url)
-            return None
-
         return product
-
-    async def _read_jsonld(self, page: Page) -> dict[str, Any] | None:
-        try:
-            blobs = await page.evaluate(JSONLD_SCRIPT)
-        except Exception:
-            return None
-        for blob in blobs:
-            try:
-                data = json.loads(blob)
-            except json.JSONDecodeError:
-                continue
-            found = _find_product_node(data)
-            if found:
-                return found
-        return None
-
-    async def _apply_dom(self, page: Page, product: Product) -> None:
-        product.name = product.name or clean(await text_of(page, self.sel.get("pdp_title")))
-        product.brand = product.brand or clean(await text_of(page, self.sel.get("pdp_brand")))
-
-        if product.price <= 0:
-            price, currency = parse_money(await text_of(page, self.sel.get("pdp_price")))
-            product.price = price
-            if currency:
-                product.currency = currency
-
-        if product.orig_price <= 0:
-            orig, _ = parse_money(await text_of(page, self.sel.get("pdp_orig_price")))
-            product.orig_price = orig
-
-        if not product.description:
-            product.description = clean(
-                await text_of(page, self.sel.get("pdp_description"))
-            )[:1200]
-
-    async def _collect_images(self, page: Page) -> list[str]:
-        selectors = self.sel.get("pdp_images", [])
-        urls = await page.evaluate(
-            """
-            (sels) => {
-              const out = [];
-              for (const sel of sels) {
-                for (const img of document.querySelectorAll(sel)) {
-                  const src = img.currentSrc || img.src ||
-                              img.getAttribute('data-src') || '';
-                  if (src && !src.startsWith('data:')) out.push(src);
-                }
-                if (out.length) break;
-              }
-              return out;
-            }
-            """,
-            selectors,
-        )
-        seen: set[str] = set()
-        ordered: list[str] = []
-        for u in urls:
-            base = u.split("?")[0]
-            if base in seen:
-                continue
-            seen.add(base)
-            ordered.append(u)
-        return ordered
-
-    async def _collect_sizes(self, page: Page) -> list[Size]:
-        selectors = self.sel.get("pdp_sizes", [])
-        disabled_attr = self.sel.get("pdp_size_disabled_attr", "disabled")
-        raw = await page.evaluate(
-            """
-            ([sels, disabledAttr]) => {
-              for (const sel of sels) {
-                const nodes = Array.from(document.querySelectorAll(sel));
-                if (!nodes.length) continue;
-                return nodes.map(n => {
-                  const label = (n.textContent || n.value || '').trim();
-                  const cls = (n.className || '') + ' ' + (n.getAttribute('aria-label') || '');
-                  const disabled = n.hasAttribute(disabledAttr) ||
-                        n.getAttribute('aria-disabled') === 'true' ||
-                        /disabled|sold[-_ ]?out|unavailable|nicht/i.test(cls);
-                  return { label, available: !disabled };
-                }).filter(s => s.label);
-              }
-              return [];
-            }
-            """,
-            [selectors, disabled_attr],
-        )
-        return [Size(label=clean(s["label"])[:12], available=bool(s["available"])) for s in raw]
 
 
 # ---------------------------------------------------------------- помощни
@@ -321,6 +344,48 @@ async def looks_logged_in(page: Page, sel: dict) -> bool:
     return not await any_present(page, sel.get("auth_wall_markers"))
 
 
+def _product_key(url: str) -> str:
+    """Стабилен идентификатор.
+
+    Адресът е /product.htm?code=41021024&colorCode=001579106 — един артикул
+    в различни цветове са различни обяви, затова и двете влизат в ключа.
+    """
+    query = parse_qs(urlsplit(url).query)
+    code = (query.get("code") or [""])[0]
+    color = (query.get("colorCode") or [""])[0]
+    if code:
+        return f"{code}_{color}" if color else code
+    return product_id_from_url(url)
+
+
+def _large_image(url: str) -> str:
+    """Вдига миниатюрата до голям кадър — същият файл, друг размер в пътя."""
+    if not url or url.startswith("data:"):
+        return ""
+    return IMAGE_SIZE_TOKEN.sub(LARGE_IMAGE, url)
+
+
+def _dedupe_images(urls: list[str]) -> list[str]:
+    """Галерията дава един и същ кадър в няколко размера; държим по един."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw in urls:
+        big = _large_image(raw)
+        if not big:
+            continue
+        key = big.split("?")[0]
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(big)
+    return ordered
+
+
+def _has_word(text: str, words: tuple[str, ...]) -> bool:
+    lowered = (text or "").casefold()
+    return any(w in lowered for w in words)
+
+
 def _paged_url(base: str, page_no: int, sort_query: str = "") -> str:
     """Добавя страниране към URL, който вече може да носи филтри.
 
@@ -336,88 +401,3 @@ def _paged_url(base: str, page_no: int, sort_query: str = "") -> str:
         params["page"] = str(page_no)
 
     return urlunsplit(parts._replace(query=urlencode(params)))
-
-
-def _is_bestseller_badge(text: str) -> bool:
-    lowered = text.casefold()
-    return any(
-        marker in lowered
-        for marker in ("bestseller", "best seller", "top", "beliebt", "popular", "хит")
-    )
-
-
-def _find_product_node(data: Any) -> dict[str, Any] | None:
-    """JSON-LD често е @graph или списък; търсим възела с @type Product."""
-    if isinstance(data, dict):
-        types = data.get("@type")
-        types = [types] if isinstance(types, str) else (types or [])
-        if any(str(t).casefold() == "product" for t in types):
-            return data
-        for key in ("@graph", "itemListElement", "mainEntity"):
-            if key in data:
-                found = _find_product_node(data[key])
-                if found:
-                    return found
-    elif isinstance(data, list):
-        for item in data:
-            found = _find_product_node(item)
-            if found:
-                return found
-    return None
-
-
-def _apply_jsonld(product: Product, node: dict[str, Any]) -> None:
-    product.name = clean(str(node.get("name", "")))[:160]
-
-    brand = node.get("brand")
-    if isinstance(brand, dict):
-        product.brand = clean(str(brand.get("name", "")))
-    elif isinstance(brand, str):
-        product.brand = clean(brand)
-
-    product.description = clean(str(node.get("description", "")))[:1200]
-    product.color = clean(str(node.get("color", "")))
-    product.material = clean(str(node.get("material", "")))
-
-    images = node.get("image")
-    if isinstance(images, str):
-        product.images = [images]
-    elif isinstance(images, list):
-        product.images = [i for i in images if isinstance(i, str)]
-
-    offers = node.get("offers")
-    if isinstance(offers, dict):
-        offers_list = [offers]
-    elif isinstance(offers, list):
-        offers_list = [o for o in offers if isinstance(o, dict)]
-    else:
-        offers_list = []
-
-    prices: list[float] = []
-    for offer in offers_list:
-        raw_price = offer.get("price") or offer.get("lowPrice")
-        if raw_price is not None:
-            try:
-                prices.append(float(str(raw_price).replace(",", ".")))
-            except ValueError:
-                pass
-        currency = offer.get("priceCurrency")
-        if currency:
-            product.currency = str(currency)
-
-        availability = str(offer.get("availability", "")).casefold()
-        if "outofstock" in availability or "soldout" in availability:
-            product.status = ProductStatus.SOLD_OUT
-
-    if prices:
-        product.price = min(prices)
-
-    # Каталожната цена рядко е в offers; идва от отделно поле.
-    for key in ("listPrice", "highPrice", "msrp"):
-        value = node.get(key)
-        if value:
-            try:
-                product.orig_price = float(str(value).replace(",", "."))
-                break
-            except ValueError:
-                continue

@@ -11,71 +11,78 @@
 # ============================================================
 
 bestsecret:
-  # Страницата зад "iron door"-а. Ако след зареждане видим това,
-  # значи сесията е изтекла и трябва ръчен вход.
-  # Най-сигурният признак: BestSecret препраща излезлите към "желязната
-  # врата". URL проверка не зависи от CSS класове и не остарява.
+  # Проверено на живо в логнат профил. Сайтът е server-rendered, без JSON-LD
+  # и без data-testid по продуктите — класовете по-долу са реалните.
+
+  # Най-сигурният признак за излязла сесия: препращане към "желязната врата".
+  # URL проверка не зависи от CSS класове и не остарява.
   auth_wall_url_pattern: "acquisition/entrance"
   auth_wall_markers:
     - "#login-button"
     - "form[action*='acquisition/entrance']"
-    - "text=Members Only"
   logged_in_markers:
-    - "[data-testid='header-account']"
-    - "a[href*='/account']"
-    - "a[href*='logout']"
+    - "a[href*='account_menu.htm']"
+    - "a[href*='personal_wish_list.htm']"
+    - "a[href*='cart.htm']"
 
-  # Листинг на категория
-  product_card: 
-    - "[data-testid='product-tile']"
-    - "article.product-tile"
-    - "li.product-tile"
-    - "a[href*='/product']"
+  # ---------------- листинг на категория ----------------
+  # Плочката носи марка, име, RRP, намаление и цена, така че се филтрира
+  # още тук и се отварят само продуктите, които имат шанс.
+  product_card:
+    - ".plp__product-list__product-container"
   card_link:
-    - "a[href]"
+    - "a[href*='product.htm']"
+  card_brand:
+    - ".designer"
+  card_name:
+    - ".name"
+  # ВАЖНО: сайтът показва едновременно EUR и BGN. `.main-prices` е блокът
+  # в основната валута; `.secondary-prices` трябва да се пренебрегва.
+  card_rrp:
+    - ".main-prices .rrp"
+  card_price:
+    - ".main-prices .sold-price"
+  card_discount:
+    - ".discount-tag"
   card_badge:
-    - "[data-testid='product-flag']"
-    - ".product-tile__flag"
-    - ".badge"
-  pagination_next:
-    - "a[rel='next']"
-    - "[data-testid='pagination-next']"
+    - ".product-tag-list"
+  card_image:
+    - "img.image-switcher--main-image"
+    - "img"
 
-  # Продуктова страница. Първо се пробва JSON-LD / embedded JSON;
-  # тези селектори са резервният вариант.
-  pdp_title:
-    - "[data-testid='product-name']"
-    - "h1"
+  # ---------------- продуктова страница ----------------
+  # Всичко се търси В ТОЗИ корен. Извън него страницата съдържа мини-кошница
+  # със свои .rrp / .sold-price / .discount-tag, които подават грешни числа.
+  pdp_root:
+    - "article.product .product-details"
+    - ".product-details"
   pdp_brand:
-    - "[data-testid='product-brand']"
-    - ".product-brand"
+    - ".designer-name"
+  pdp_title:
+    - ".product-title"
   pdp_price:
-    - "[data-testid='product-price-current']"
-    - ".price--current"
+    - ".main-prices .sold-price"
   pdp_orig_price:
-    - "[data-testid='product-price-original']"
-    - ".price--original"
-    - "del"
+    - ".main-prices .rrp"
+  pdp_discount:
+    - ".main-prices .discount-tag"
   pdp_description:
-    - "[data-testid='product-description']"
-    - "#product-description"
-    - ".product-details__description"
+    - ".description"
+    - ".details-section"
   pdp_images:
-    - "[data-testid='product-gallery'] img"
-    - ".product-gallery img"
-    - "picture img"
+    - ".image-gallery img"
+    - ".gallery-image"
   pdp_sizes:
-    - "[data-testid='size-selector'] button"
     - ".size-selector button"
-    - "select[name*='size'] option"
+    - ".size-selector li"
+    - ".size-selector option"
   pdp_size_disabled_attr: "disabled"
   pdp_sold_out_markers:
     - "text=Sold out"
     - "text=Ausverkauft"
-    - "[data-testid='product-soldout']"
   pdp_low_stock_markers:
-    - "[data-testid='low-stock']"
     - 'text=/Only \d+ left/i'
+    - 'text=/Last \d+ item/i'
 
 bazar:
   login_url: https://bazar.bg/user/login

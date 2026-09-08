@@ -158,20 +158,32 @@ class Orchestrator:
         category_key: str,
         report: CycleReport,
     ) -> None:
-        """Един кандидат: чете, оценява, изчислява цена, записва за публикуване."""
+        """Един кандидат: оценява от плочката, чете само оцелелите, ценообразува."""
+        # Плочката вече носи марка, цена, каталожна цена и намаление. Ако
+        # продуктът отпада по тях, продуктовата страница изобщо не се отваря —
+        # това спестява стотици заявки на цикъл.
+        draft = source.product_from_card(hit, category_key)
+        draft_verdict = evaluate(draft, self.cfg.selection)
+        if not draft_verdict.accepted:
+            log.debug("отпада от листинга %s (%s): %s",
+                      draft.id, draft.brand, draft_verdict.reason)
+            return
+
+        existing = self.db.get_listing(draft.id)
+        if existing is not None and existing["state"] in ("published", "candidate"):
+            return
+
         product = await source.fetch_product(hit.url, category_key, page, hit)
         if product is None:
             return
 
+        # Продуктовата страница е по-точна от плочката, затова се преоценява.
         verdict = evaluate(product, self.cfg.selection)
         self.db.upsert_product(product, verdict.score)
 
         if not verdict.accepted:
-            log.debug("отпада %s (%s): %s", product.id, product.brand, verdict.reason)
-            return
-
-        existing = self.db.get_listing(product.id)
-        if existing is not None and existing["state"] in ("published", "candidate"):
+            log.debug("отпада от страницата %s (%s): %s",
+                      product.id, product.brand, verdict.reason)
             return
 
         price = compute_price(product, self.cfg.pricing)

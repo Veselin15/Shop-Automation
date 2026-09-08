@@ -29,53 +29,59 @@ limits:
 
 # ------------------------------------------------------------
 #  ОТКЪДЕ ЧЕТЕ
-#
-#  ! ЕДИНСТВЕНОТО, КОЕТО ТРЯБВА ДА ПОПЪЛНИШ РЪЧНО !
-#
-#  За всяка категория влез в BestSecret, отвори я и приложи филтрите
-#  от самия сайт:
-#      - намаление 70% и нагоре
-#      - марките от списъка по-долу
-#      - ценови диапазон 30–200 €
-#  После копирай адреса от адресната лента и го сложи в `url`.
-#
-#  Филтрирането от страната на BestSecret е важно: без него ботът
-#  отваря стотици продуктови страници, за да отхвърли 95% от тях.
-#  Празна категория (без url и без path) просто се прескача.
+#  Адресите долу са проверени в логнат профил и работят както са.
 # ------------------------------------------------------------
 source:
   name: bestsecret
   base_url: https://www.bestsecret.com
   sort_query: ""
   max_pages_per_category: 3
+
+  # Адресите са взети от логнат профил и са проверени. Схемата на BestSecret е
+  # /category.htm?area=<РАЗДЕЛ>&category=<вътрешно_име>[&gender=MALE].
+  #
+  # Може да ги замениш с филтрирани адреси (намаление, марки, цена) — просто
+  # копирай адресната лента, след като си сложил филтрите в сайта. Ботът слива
+  # query параметрите правилно, страницирането не чупи филтрите.
+  # Филтърът в сайта пести заявки, но не е задължителен: плочката в листинга
+  # носи марка, цена и намаление, така че подборът се прави и без него.
   categories:
-    - key: sunglasses
-      label: "Слънчеви очила"
-      url: ""
-    - key: watches_men
-      label: "Мъжки часовници"
-      url: ""
+    - key: sunglasses_women
+      label: "Слънчеви очила (дамски)"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_sonnenbrillen"
+    - key: sunglasses_men
+      label: "Слънчеви очила (мъжки)"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_sonnenbrillen&gender=MALE"
     - key: watches_women
-      label: "Дамски часовници"
-      url: ""
-    - key: wallets
-      label: "Портфейли и портмонета"
-      url: ""
+      label: "Часовници (дамски)"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_uhren"
+    - key: watches_men
+      label: "Часовници (мъжки)"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_uhren&gender=MALE"
     - key: bags_women
       label: "Дамски чанти"
-      url: ""
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_taschen"
     - key: bags_men
-      label: "Мъжки чантички (crossbody)"
-      url: ""
-    - key: keychains
-      label: "Ключодържатели"
-      url: ""
-    - key: hats
-      label: "Шапки"
-      url: ""
-    - key: scarves
-      label: "Шалове"
-      url: ""
+      label: "Мъжки чанти и crossbody"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_taschen&gender=MALE"
+    - key: small_accessories_women
+      label: "Портфейли, ключодържатели (дамски)"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_smallaccessories"
+    - key: small_accessories_men
+      label: "Портфейли, ключодържатели (мъжки)"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_smallaccessories&gender=MALE"
+    - key: hats_women
+      label: "Шапки (дамски)"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_muetzen"
+    - key: hats_men
+      label: "Шапки (мъжки)"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_muetzen&gender=MALE"
+    - key: scarves_women
+      label: "Шалове (дамски)"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_schalstuecher"
+    - key: scarves_men
+      label: "Шалове (мъжки)"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_schals&gender=MALE"
 
 selection:
   # Твърд праг. Филтърът в BestSecret вече отсява, това е втора защита.
@@ -163,6 +169,41 @@ selection:
       "Citizen": 0.75
       "Tissot": 0.85
       "Daniel Wellington": 0.70
+      # --- дизайнерски марки, които реално се срещат в тези категории ---
+      # (събрани от обхождане на живо, не по памет)
+      "Tom Ford": 0.95
+      "Salvatore Ferragamo": 0.90
+      "Dolce & Gabbana": 0.90
+      "Saint Laurent": 0.90
+      "Burberry": 0.90
+      "Fendi": 0.90
+      "Balenciaga": 0.88
+      "Bottega Veneta": 0.88
+      "Alexander McQueen": 0.85
+      "Missoni": 0.85
+      "Mulberry": 0.85
+      "Chloe": 0.85
+      "Celine": 0.85
+      "Max Mara": 0.80
+      "Isabel Marant": 0.80
+      "Just Cavalli": 0.80
+      "Roberto Cavalli": 0.80
+      "Philipp Plein": 0.80
+      "Victoria Beckham": 0.80
+      "Carolina Herrera": 0.80
+      "Etro": 0.78
+      "Jil Sander": 0.78
+      "Aigner": 0.75
+      "Nina Ricci": 0.75
+      "Coccinelle": 0.75
+      "Furla": 1.0
+      "Plein Sport": 0.70
+      "Liebeskind": 0.70
+      "Ba&sh": 0.70
+      "David Beckham": 0.70
+      "Polaroid": 0.65
+      "Carven": 0.65
+      "CHIMI": 0.60
 
 pricing:
   # От 01.01.2026 България е в еврозоната. Ако при теб Bazar.bg още
@@ -173,15 +214,18 @@ pricing:
   default_markup: 1.45
   markup_by_category:
     # Дребните артикули носят малко в абсолютна стойност — по-висок процент.
-    keychains: 1.70
-    wallets: 1.60
-    scarves: 1.60
-    hats: 1.60
-    sunglasses: 1.55
+    small_accessories_women: 1.65
+    small_accessories_men: 1.65
+    scarves_women: 1.60
+    scarves_men: 1.60
+    hats_women: 1.60
+    hats_men: 1.60
+    sunglasses_women: 1.55
+    sunglasses_men: 1.55
     bags_women: 1.45
     bags_men: 1.45
-    watches_men: 1.40
     watches_women: 1.40
+    watches_men: 1.40
   # Доставка BestSecret -> теб, влиза в себестойността преди надценката.
   shipping_buffer: 4.50
   # Заявка + 10 дни чакане + разходка до куриера. Под това не си струва.
@@ -198,15 +242,18 @@ listing:
   # Път в дървото на Bazar.bg, ниво по ниво. Пътят, а не само последният
   # етикет, защото "Мъжки" се среща и под Часовници, и под Дрехи, и под Обувки.
   category_map:
-    sunglasses:   ["Мода", "Аксесоари", "Слънчеви и диоптрични очила"]
-    watches_men:  ["Мода", "Часовници", "Мъжки"]
-    watches_women: ["Мода", "Часовници", "Дамски"]
-    wallets:      ["Мода", "Аксесоари", "Портфейли, портмонета"]
-    bags_women:   ["Мода", "Аксесоари", "Чанти"]
-    bags_men:     ["Мода", "Аксесоари", "Чанти"]
-    keychains:    ["Мода", "Аксесоари"]
-    hats:         ["Мода", "Аксесоари", "Шапки"]
-    scarves:      ["Мода", "Аксесоари", "Шалове"]
+    sunglasses_women:        ["Мода", "Аксесоари", "Слънчеви и диоптрични очила"]
+    sunglasses_men:          ["Мода", "Аксесоари", "Слънчеви и диоптрични очила"]
+    watches_women:           ["Мода", "Часовници", "Дамски"]
+    watches_men:             ["Мода", "Часовници", "Мъжки"]
+    bags_women:              ["Мода", "Аксесоари", "Чанти"]
+    bags_men:                ["Мода", "Аксесоари", "Чанти"]
+    small_accessories_women: ["Мода", "Аксесоари", "Портфейли, портмонета"]
+    small_accessories_men:   ["Мода", "Аксесоари", "Портфейли, портмонета"]
+    hats_women:              ["Мода", "Аксесоари", "Шапки"]
+    hats_men:                ["Мода", "Аксесоари", "Шапки"]
+    scarves_women:           ["Мода", "Аксесоари", "Шалове"]
+    scarves_men:             ["Мода", "Аксесоари", "Шалове"]
 
   title_template: "{brand} {name}"
   title_max_len: 70
