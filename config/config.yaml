@@ -280,6 +280,19 @@ listing:
 
   extra_note: "Отговарям бързо на съобщения. Пиши за допълнителни снимки или въпроси."
 
+bazar:
+  # Профилът има включена двуфакторна аутентикация. Bazar.bg връща
+  # requires_2fa и автоматичен вход с парола не може да мине — всеки опит
+  # само поръчва нов код. Затова сесията се прави ръчно и се пренася,
+  # точно както при BestSecret:
+  #
+  #   на твоя компютър:  shopbot login bazar      (въвеждаш и кода)
+  #   после:             scp data/sessions/bazar.json <сървър>:~/Shop-Automation/
+  #   на сървъра:        shopbot import-session bazar --file ~/Shop-Automation/bazar.json
+  #
+  # Ако някога изключиш двуфакторната, върни това на true.
+  password_login: false
+
 removal:
   auto_remove: true
   # Обявата пада, ако намалението слезе под този праг.

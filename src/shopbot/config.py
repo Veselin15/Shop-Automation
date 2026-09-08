@@ -140,6 +140,15 @@ class ListingConfig(BaseModel):
     extra_note: str = ""
 
 
+class BazarConfig(BaseModel):
+    """Как ботът влиза в Bazar.bg."""
+
+    # Автоматичен вход с парола. Изключва се, когато профилът има включена
+    # двуфакторна аутентикация: API-то връща requires_2fa и всеки опит само
+    # поръчва нов код, без изобщо да може да мине.
+    password_login: bool = True
+
+
 class RemovalConfig(BaseModel):
     auto_remove: bool = True
     remove_below_discount_pct: int = 45
@@ -170,6 +179,7 @@ class Config(BaseModel):
     selection: SelectionConfig = Field(default_factory=SelectionConfig)
     pricing: PricingConfig = Field(default_factory=PricingConfig)
     listing: ListingConfig = Field(default_factory=ListingConfig)
+    bazar: BazarConfig = Field(default_factory=BazarConfig)
     removal: RemovalConfig = Field(default_factory=RemovalConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
 

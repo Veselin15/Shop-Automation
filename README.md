@@ -114,13 +114,15 @@ source .venv/bin/activate
 ### 1. `.env`
 
 ```
-BAZAR_EMAIL=...
-BAZAR_PASSWORD=...
 TELEGRAM_BOT_TOKEN=...     # по избор, но искаш да знаеш кога нещо се счупи
 TELEGRAM_CHAT_ID=...
+
+BAZAR_EMAIL=...            # нужни само ако изключиш двуфакторната
+BAZAR_PASSWORD=...
 ```
 
-BestSecret няма нужда от парола в `.env` — входът е ръчен.
+Пароли за BestSecret не се пазят изобщо — входът там е ръчен. За Bazar.bg
+също, докато двуфакторната аутентикация е включена (виж стъпка 2).
 
 **Telegram (по избор, но искаш го).** Оттам разбираш, че сесията е паднала или
 че обява не е минала, без да гледаш логове.
@@ -176,7 +178,28 @@ scp data/sessions/bestsecret.json veski4a@192.168.0.101:~/Shop-Automation/
 Ако все пак имаш X сървър на Windows (VcXsrv, MobaXterm), можеш и направо:
 `ssh -X veski4a@192.168.0.101` и `./.venv/bin/shopbot login bestsecret`.
 
-За Bazar.bg това не е нужно — там входът е автоматичен от `.env`.
+**Bazar.bg е по същия начин.** Профилът има включена двуфакторна
+аутентикация, така че автоматичен вход с парола не може да мине — API-то
+връща `requires_2fa` и всеки опит само поръчва нов код. Затова
+`bazar.password_login` в конфига е `false` и сесията се прави ръчно:
+
+```bash
+shopbot login bazar
+```
+
+Въвеждаш имейл, парола и кода, натискаш Enter в конзолата — сесията се
+изнася автоматично. После същото пренасяне:
+
+```bash
+scp data/sessions/bazar.json veski4a@192.168.0.101:~/Shop-Automation/
+```
+
+```bash
+./.venv/bin/shopbot import-session bazar --file ~/Shop-Automation/bazar.json
+```
+
+Ако някога изключиш двуфакторната, върни `password_login: true` и ботът ще
+влиза сам с данните от `.env`.
 
 ### 3. Категориите в BestSecret — вече попълнени
 

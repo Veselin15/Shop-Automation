@@ -47,6 +47,13 @@ log = logging.getLogger(__name__)
 SITE = "bazar"
 LOGIN_PATH = "/user/login"
 
+MANUAL_LOGIN_HINT = (
+    "Направи сесията ръчно и я пренеси: на компютъра си пусни "
+    "`shopbot login bazar` (там въвеждаш и кода), после "
+    "`scp data/sessions/bazar.json <сървър>:~/Shop-Automation/` и на сървъра "
+    "`shopbot import-session bazar --file ~/Shop-Automation/bazar.json`"
+)
+
 
 class PublishError(RuntimeError):
     pass
@@ -95,6 +102,9 @@ class BazarSink:
             log.info("Bazar.bg: вече сме логнати")
             return
 
+        if not self.cfg.bazar.password_login:
+            raise AuthWallError(SITE, MANUAL_LOGIN_HINT)
+
         email = self.cfg.secrets.bazar_email
         password = self.cfg.secrets.bazar_password
         if not (email and password):
@@ -129,7 +139,19 @@ class BazarSink:
             ) as info:
                 await submit.click()
             api = await info.value
-            responses.append(f"HTTP {api.status}: {await _api_message(api)}")
+            payload = await _api_payload(api)
+            responses.append(f"HTTP {api.status}: {_describe(payload)}")
+
+            # 2FA не се заобикаля. Спираме веднага и казваме какво да се
+            # направи — иначе следващият цикъл поръчва още един код.
+            if payload.get("requires_2fa"):
+                raise AuthWallError(
+                    SITE,
+                    "профилът иска двуфакторна аутентикация, затова вход с "
+                    "парола не може да мине. " + MANUAL_LOGIN_HINT,
+                )
+        except AuthWallError:
+            raise
         except PlaywrightTimeout:
             responses.append(
                 f"кликът не задейства заявка към {api_pattern} за 25 секунди"
@@ -458,23 +480,28 @@ class BazarSink:
         return [str(i) for i in ids if i]
 
 
-async def _api_message(response) -> str:
-    """Човешкото съобщение от API-то за вход.
-
-    Отговорът е JSON с екранирана кирилица (\u0413...); без декодиране
-    грешката е нечетима точно когато най-много трябва да се чете.
-    """
+async def _api_payload(response) -> dict:
+    """JSON-ът от API-то за вход, или празно при нечетим отговор."""
     try:
         payload = await response.json()
     except Exception:
         try:
-            return " ".join((await response.text())[:300].split())
+            return {"message": " ".join((await response.text())[:300].split())}
         except Exception:
-            return "(отговорът не се прочете)"
+            return {}
+    return payload if isinstance(payload, dict) else {"message": str(payload)[:300]}
 
-    if isinstance(payload, dict):
-        message = payload.get("message") or payload.get("error") or ""
-        extra = [k for k, v in payload.items() if v is True and k != "message"]
-        if message:
-            return f"{message}" + (f" [{', '.join(extra)}]" if extra else "")
+
+def _describe(payload: dict) -> str:
+    """Човешкото съобщение от API-то, плюс вдигнатите флагове.
+
+    Отговорът идва с екранирана кирилица; без декодиране причината е
+    нечетима точно когато най-много трябва да се чете.
+    """
+    if not payload:
+        return "(отговорът не се прочете)"
+    message = payload.get("message") or payload.get("error") or ""
+    flags = [k for k, v in payload.items() if v is True and k != "message"]
+    if message:
+        return message + (f" [{', '.join(flags)}]" if flags else "")
     return " ".join(str(payload)[:300].split())
