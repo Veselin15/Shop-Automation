@@ -1,0 +1,30 @@
+[Unit]
+Description=shopbot — BestSecret -> Bazar.bg автоматизация
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__PROJECT_DIR__
+Environment=PYTHONUNBUFFERED=1
+Environment=SHOPBOT_HEADLESS=1
+ExecStart=__PROJECT_DIR__/.venv/bin/shopbot run
+Restart=on-failure
+RestartSec=60
+
+# Chromium иска повече от стандартния лимит файлови дескриптори.
+LimitNOFILE=8192
+
+# Умерена изолация. Не пълна, защото Chromium има нужда от /tmp и /dev/shm.
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ProtectHome=false
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shopbot
+
+[Install]
+WantedBy=multi-user.target

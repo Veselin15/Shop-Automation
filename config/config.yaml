@@ -1,0 +1,243 @@
+# ============================================================
+#  shopbot — конфигурация
+#  Стратегия: аксесоари без размерен риск, само силни намаления,
+#  предимно известни марки, продажба по предварителна заявка.
+#  Файлът се чете при всеки цикъл — не се налага рестарт.
+# ============================================================
+
+runtime:
+  headless: true
+  timezone: Europe/Sofia
+  # Ботът работи само в този прозорец. Публикуване в 03:41 сутринта
+  # изглежда като бот и на Bazar.bg, и на купувачите.
+  active_hours: "09:00-22:30"
+  # Секунди между две действия в един и същ сайт (случайно в диапазона).
+  min_action_delay_s: 20
+  max_action_delay_s: 75
+
+schedule:
+  discover_every_min: 240
+  recheck_every_min: 90
+  recheck_min_age_h: 6
+
+limits:
+  max_publish_per_day: 8
+  max_publish_per_run: 3
+  max_remove_per_day: 25
+  max_products_scanned_per_run: 120
+  max_active_listings: 60
+
+# ------------------------------------------------------------
+#  ОТКЪДЕ ЧЕТЕ
+#
+#  ! ЕДИНСТВЕНОТО, КОЕТО ТРЯБВА ДА ПОПЪЛНИШ РЪЧНО !
+#
+#  За всяка категория влез в BestSecret, отвори я и приложи филтрите
+#  от самия сайт:
+#      - намаление 70% и нагоре
+#      - марките от списъка по-долу
+#      - ценови диапазон 30–200 €
+#  После копирай адреса от адресната лента и го сложи в `url`.
+#
+#  Филтрирането от страната на BestSecret е важно: без него ботът
+#  отваря стотици продуктови страници, за да отхвърли 95% от тях.
+#  Празна категория (без url и без path) просто се прескача.
+# ------------------------------------------------------------
+source:
+  name: bestsecret
+  base_url: https://www.bestsecret.com
+  sort_query: ""
+  max_pages_per_category: 3
+  categories:
+    - key: sunglasses
+      label: "Слънчеви очила"
+      url: ""
+    - key: watches_men
+      label: "Мъжки часовници"
+      url: ""
+    - key: watches_women
+      label: "Дамски часовници"
+      url: ""
+    - key: wallets
+      label: "Портфейли и портмонета"
+      url: ""
+    - key: bags_women
+      label: "Дамски чанти"
+      url: ""
+    - key: bags_men
+      label: "Мъжки чантички (crossbody)"
+      url: ""
+    - key: keychains
+      label: "Ключодържатели"
+      url: ""
+    - key: hats
+      label: "Шапки"
+      url: ""
+    - key: scarves
+      label: "Шалове"
+      url: ""
+
+selection:
+  # Твърд праг. Филтърът в BestSecret вече отсява, това е втора защита.
+  min_discount_pct: 70
+  # Под 30 € печалбата не оправдава заявката; над 200 € купувачът трудно
+  # плаща предварително за нещо, което идва след 10 дни.
+  min_source_price: 30.0
+  max_source_price: 200.0
+  # Аксесоарите нямат размер — това ги пуска да минат.
+  allow_one_size: true
+  # Ако все пак има размери (шапки, колани), поне един да е наличен.
+  min_sizes_available: 1
+  # Празно = не отрязваме нищо твърдо по марка. Непознатите марки не са
+  # забранени, но получават нисък скор и минават само при огромно намаление.
+  brands_allow: []
+  min_brand_tier: 0.0
+  brands_deny:
+    - "No Name"
+  title_deny_keywords:
+    - "gift card"
+    - "ваучер"
+    - "gutschein"
+
+  popularity:
+    # Прагът е нагласен така: топ марка минава от 70% нагоре;
+    # непозната марка има нужда от ~85% плюс сигнал за търсене.
+    min_score: 0.45
+    unknown_brand_tier: 0.35
+    weights:
+      brand_tier: 0.40
+      discount: 0.25
+      bestseller_badge: 0.15
+      low_stock: 0.10
+      listing_rank: 0.10
+
+    # Съвпадението е частично и без разлика в главни/малки букви:
+    # "Armani" хваща и "Emporio Armani", и "Giorgio Armani".
+    brand_tiers:
+      # --- твоят топ списък ---
+      "Guess": 1.0
+      "Calvin Klein": 1.0
+      "Tommy Hilfiger": 1.0
+      "Carrera": 1.0
+      "Jimmy Choo": 1.0
+      "Furla": 1.0
+      "Michael Kors": 1.0
+      "Armani": 1.0
+      "Hugo Boss": 1.0
+      "Boss": 1.0
+      "Diesel": 1.0
+      # --- и другите, които се продават също толкова добре в БГ ---
+      "Ray-Ban": 0.95
+      "Versace": 0.90
+      "Prada": 0.90
+      "Gucci": 0.90
+      "Valentino": 0.90
+      "Marc Jacobs": 0.90
+      "Karl Lagerfeld": 0.90
+      "Coach": 0.85
+      "Kate Spade": 0.85
+      "Longchamp": 0.85
+      "Lacoste": 0.85
+      "Swarovski": 0.85
+      "Tous": 0.80
+      "Fossil": 0.80
+      "DKNY": 0.80
+      "Liu Jo": 0.80
+      "Pinko": 0.80
+      "Love Moschino": 0.80
+      "Moschino": 0.80
+      "Ted Baker": 0.75
+      "Police": 0.75
+      "Oakley": 0.75
+      "Persol": 0.75
+      "Kipling": 0.70
+      "Desigual": 0.70
+      "Trussardi": 0.70
+      "Napapijri": 0.70
+      "Levi's": 0.70
+      "Replay": 0.65
+      "Pepe Jeans": 0.65
+      "Superdry": 0.65
+      "Casio": 0.70
+      "Seiko": 0.75
+      "Citizen": 0.75
+      "Tissot": 0.85
+      "Daniel Wellington": 0.70
+
+pricing:
+  # От 01.01.2026 България е в еврозоната. Ако при теб Bazar.bg още
+  # работи в лева, смени на BGN — всички сметки се преизчисляват.
+  output_currency: EUR
+  fx:
+    eur_bgn: 1.95583
+  default_markup: 1.45
+  markup_by_category:
+    # Дребните артикули носят малко в абсолютна стойност — по-висок процент.
+    keychains: 1.70
+    wallets: 1.60
+    scarves: 1.60
+    hats: 1.60
+    sunglasses: 1.55
+    bags_women: 1.45
+    bags_men: 1.45
+    watches_men: 1.40
+    watches_women: 1.40
+  # Доставка BestSecret -> теб, влиза в себестойността преди надценката.
+  shipping_buffer: 4.50
+  # Заявка + 10 дни чакане + разходка до куриера. Под това не си струва.
+  min_absolute_margin: 12.0
+  charm_ending: 0.90
+  min_listing_price: 45.0
+  max_listing_price: 400.0
+
+listing:
+  location: "София"
+  condition: "Ново"
+  max_images: 6
+
+  # Път в дървото на Bazar.bg, ниво по ниво. Пътят, а не само последният
+  # етикет, защото "Мъжки" се среща и под Часовници, и под Дрехи, и под Обувки.
+  category_map:
+    sunglasses:   ["Мода", "Аксесоари", "Слънчеви и диоптрични очила"]
+    watches_men:  ["Мода", "Часовници", "Мъжки"]
+    watches_women: ["Мода", "Часовници", "Дамски"]
+    wallets:      ["Мода", "Аксесоари", "Портфейли, портмонета"]
+    bags_women:   ["Мода", "Аксесоари", "Чанти"]
+    bags_men:     ["Мода", "Аксесоари", "Чанти"]
+    keychains:    ["Мода", "Аксесоари"]
+    hats:         ["Мода", "Аксесоари", "Шапки"]
+    scarves:      ["Мода", "Аксесоари", "Шалове"]
+
+  title_template: "{brand} {name}"
+  title_max_len: 70
+
+  description_template: |
+    {brand} — {name}
+
+    Чисто нов и оригинален артикул, с етикет и фирмена опаковка.
+    {color_line}{size_line}{material_line}
+    Каталожна цена: {orig_price}
+    Моята цена: {price}
+
+    ВАЖНО — начин на поръчка
+    {delivery_note}
+
+    {extra_note}
+
+  delivery_note: |
+    Артикулът се доставя по предварителна заявка.
+    Срокът за доставка до офис на куриер е около 10 работни дни.
+
+  extra_note: "Отговарям бързо на съобщения. Пиши за допълнителни снимки или въпроси."
+
+removal:
+  auto_remove: true
+  # Обявата пада, ако намалението слезе под този праг.
+  remove_below_discount_pct: 60
+  misses_before_removal: 2
+
+notifications:
+  on_publish: true
+  on_remove: true
+  on_error: true
+  on_auth_wall: true

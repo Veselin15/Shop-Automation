@@ -1,0 +1,145 @@
+# ============================================================
+#  DOM селектори.
+#
+#  Това е единственият файл, който ще пипаш, когато някой от двата
+#  сайта смени дизайна си. Всяко поле е СПИСЪК от кандидати — ботът
+#  пробва отгоре надолу и взима първия, който съществува.
+#
+#  `shopbot calibrate bazar --url https://bazar.bg/ads/save`
+#  `shopbot calibrate bestsecret --url <адрес на продукт>`
+#  изкарват реалната структура на страницата, за да ги обновиш.
+# ============================================================
+
+bestsecret:
+  # Страницата зад "iron door"-а. Ако след зареждане видим това,
+  # значи сесията е изтекла и трябва ръчен вход.
+  auth_wall_markers:
+    - "#login-button"
+    - "form[action*='acquisition/entrance']"
+    - "text=Members Only"
+  logged_in_markers:
+    - "[data-testid='header-account']"
+    - "a[href*='/account']"
+    - "a[href*='logout']"
+
+  # Листинг на категория
+  product_card: 
+    - "[data-testid='product-tile']"
+    - "article.product-tile"
+    - "li.product-tile"
+    - "a[href*='/product']"
+  card_link:
+    - "a[href]"
+  card_badge:
+    - "[data-testid='product-flag']"
+    - ".product-tile__flag"
+    - ".badge"
+  pagination_next:
+    - "a[rel='next']"
+    - "[data-testid='pagination-next']"
+
+  # Продуктова страница. Първо се пробва JSON-LD / embedded JSON;
+  # тези селектори са резервният вариант.
+  pdp_title:
+    - "[data-testid='product-name']"
+    - "h1"
+  pdp_brand:
+    - "[data-testid='product-brand']"
+    - ".product-brand"
+  pdp_price:
+    - "[data-testid='product-price-current']"
+    - ".price--current"
+  pdp_orig_price:
+    - "[data-testid='product-price-original']"
+    - ".price--original"
+    - "del"
+  pdp_description:
+    - "[data-testid='product-description']"
+    - "#product-description"
+    - ".product-details__description"
+  pdp_images:
+    - "[data-testid='product-gallery'] img"
+    - ".product-gallery img"
+    - "picture img"
+  pdp_sizes:
+    - "[data-testid='size-selector'] button"
+    - ".size-selector button"
+    - "select[name*='size'] option"
+  pdp_size_disabled_attr: "disabled"
+  pdp_sold_out_markers:
+    - "text=Sold out"
+    - "text=Ausverkauft"
+    - "[data-testid='product-soldout']"
+  pdp_low_stock_markers:
+    - "[data-testid='low-stock']"
+    - 'text=/Only \d+ left/i'
+
+bazar:
+  login_url: https://bazar.bg/user/login
+  publish_url: https://bazar.bg/ads/save
+  my_ads_url: https://bazar.bg/ads/my
+  delete_url_template: https://bazar.bg/ads/delete/{id}
+
+  login_form: "#login-form"
+  login_email: "#login-form input[name='email']"
+  login_password: "#login-form input[name='password']"
+  login_submit: "#login-form input[type='submit']"
+  # ВНИМАНИЕ: input[name='contact_website'] е honeypot на Bazar.bg.
+  # Трябва да остане ПРАЗЕН — попълването му маркира заявката като бот.
+  honeypot_field: "input[name='contact_website']"
+  logged_in_markers:
+    - "a[href*='/user/logout']"
+    - "a[href='/ads/my']"
+
+  cookie_accept: []
+  cookie_reject:
+    - "button:has-text('ОТХВЪРЛЕТЕ ВСИЧКИ')"
+    - "#onetrust-reject-all-handler"
+
+  # Формата за нова обява
+  form_title:
+    - "input[name='title']"
+    - "#title"
+  form_description:
+    - "textarea[name='description']"
+    - "#description"
+  form_price:
+    - "input[name='price']"
+    - "#price"
+  form_currency:
+    - "select[name='currency']"
+  form_category_opener:
+    - "[data-role='category-select']"
+    - "#category-select"
+    - "select[name='category_id']"
+  form_category_search:
+    - "input[name='category_search']"
+    - "input[placeholder*='категор']"
+  form_location:
+    - "input[name='location']"
+    - "select[name='city_id']"
+    - "input[placeholder*='Град']"
+  form_condition:
+    - "select[name='condition']"
+  form_images_input:
+    - "input[type='file']"
+  form_submit:
+    - "button[type='submit']"
+    - "input[type='submit']"
+  form_error:
+    - ".error"
+    - ".alert-danger"
+    - "[class*='error']"
+
+  # Резултат след публикуване
+  published_url_pattern: 'bazar\.bg/obiava-(\d+)'
+
+  # Моите обяви
+  my_ad_row:
+    - "[data-ad-id]"
+    - ".ad-row"
+  my_ad_id_attr: "data-ad-id"
+  delete_confirm:
+    - "button:has-text('Изтрий')"
+    - "button:has-text('Потвърди')"
+    - "input[type='submit'][value*='Изтрий']"

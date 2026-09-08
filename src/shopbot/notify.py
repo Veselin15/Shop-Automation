@@ -1,0 +1,56 @@
+"""Известия по Telegram. Ако не е конфигуриран, всичко отива само в лога."""
+
+from __future__ import annotations
+
+import logging
+
+import httpx
+
+log = logging.getLogger(__name__)
+
+TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+MAX_LEN = 3800
+
+
+class Notifier:
+    def __init__(self, token: str = "", chat_id: str = "") -> None:
+        self.token = token
+        self.chat_id = chat_id
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.token and self.chat_id)
+
+    async def send(self, text: str) -> None:
+        log.info("notify: %s", text.replace("\n", " | ")[:200])
+        if not self.enabled:
+            return
+        payload = {
+            "chat_id": self.chat_id,
+            "text": text[:MAX_LEN],
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(TELEGRAM_API.format(token=self.token), json=payload)
+                if resp.status_code != 200:
+                    log.warning("Telegram отказа (%s): %s", resp.status_code, resp.text[:200])
+        except Exception as exc:  # известието никога не бива да събаря бота
+            log.warning("Известието не тръгна: %s", exc)
+
+    async def published(self, title: str, price: str, url: str) -> None:
+        await self.send(f"🟢 Публикувано\n<b>{title}</b>\n{price}\n{url}")
+
+    async def removed(self, title: str, reason: str, url: str = "") -> None:
+        await self.send(f"🔴 Свалено\n<b>{title}</b>\nПричина: {reason}\n{url}")
+
+    async def auth_wall(self, site: str) -> None:
+        await self.send(
+            f"🔐 <b>{site}</b> иска ръчен вход.\n"
+            f"Ботът е на пауза за този сайт.\n"
+            f"Пусни: <code>shopbot login {site}</code>"
+        )
+
+    async def error(self, context: str, message: str) -> None:
+        await self.send(f"⚠️ Грешка в {context}\n<code>{message[:600]}</code>")
