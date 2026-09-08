@@ -37,21 +37,29 @@ sudo systemctl daemon-reload
 
 cat <<'DONE'
 
-Готово. Остават три неща:
+Готово. Остават четири неща:
 
   1. Попълни .env (BAZAR_EMAIL, BAZAR_PASSWORD, по избор TELEGRAM_*).
 
-  2. Еднократен ръчен вход в BestSecret. Сървърът е без екран, затова
-     или влез с проброс на графиката:
+  2. Сесия за BestSecret. Влизането става на твоя компютър, защото сървърът
+     няма екран. НЕ копирай папката с профила — бисквитките на Chromium са
+     криптирани с ключ на операционната система и профил от Windows не се
+     чете тук. Пренеси преносимия JSON:
 
-         ssh -X veski4a@192.168.0.101
-         cd ~/Shop-Automation && ./.venv/bin/shopbot login bestsecret
+         # на твоя компютър
+         shopbot login bestsecret
+         shopbot export-session bestsecret
+         scp data/sessions/bestsecret.json veski4a@<този сървър>:~/Shop-Automation/
 
-     или направи входа на компютъра си и копирай профила:
+         # тук
+         ./.venv/bin/shopbot import-session bestsecret --file ~/Shop-Automation/bestsecret.json
 
-         scp -r data/profiles/bestsecret veski4a@192.168.0.101:~/Shop-Automation/data/profiles/
+  3. Попълни филтрираните адреси на BestSecret в config/config.yaml
+     (source.categories[].url) и калибрирай селекторите:
 
-  3. Пробен цикъл, преди да пуснеш услугата:
+         ./.venv/bin/shopbot calibrate bazar
+
+  4. Пробен цикъл, преди да пуснеш услугата:
 
          ./.venv/bin/shopbot once --dry-run -v
 

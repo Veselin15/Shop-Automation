@@ -96,12 +96,28 @@ BestSecret е зад покана и не пуска автоматичен вх
 shopbot login bestsecret
 ```
 
-Сървърът е без екран, затова или влизаш с `ssh -X`, или правиш входа на
-компютъра си и копираш папката:
+Сървърът няма екран, затова входът се прави на компютъра ти и сесията се
+пренася. **Не копирай папката с профила** — Chromium криптира бисквитките с
+ключ на операционната система (DPAPI под Windows) и профил от Windows не се
+чете от Linux. Използвай преносимия JSON:
 
 ```bash
-scp -r data/profiles/bestsecret veski4a@192.168.0.101:~/Shop-Automation/data/profiles/
+# на компютъра ти, след като си влязъл
+shopbot export-session bestsecret
+
+# после
+scp data/sessions/bestsecret.json veski4a@192.168.0.101:~/Shop-Automation/
+
+# на сървъра
+./.venv/bin/shopbot import-session bestsecret --file ~/Shop-Automation/bestsecret.json
 ```
+
+`import-session` веднага проверява дали сесията работи и казва, ако не.
+
+Ако все пак имаш X сървър на Windows (VcXsrv, MobaXterm), можеш и направо:
+`ssh -X veski4a@192.168.0.101` и `./.venv/bin/shopbot login bestsecret`.
+
+За Bazar.bg това не е нужно — там входът е автоматичен от `.env`.
 
 ### 3. Филтрираните адреси от BestSecret ⚠️ **без това ботът не сканира нищо**
 
@@ -170,6 +186,8 @@ journalctl -u shopbot -f
 | Команда | За какво е |
 |---|---|
 | `shopbot login <bestsecret\|bazar>` | ръчен вход с видим браузър, записва сесията |
+| `shopbot export-session <site>` | изнася сесията като преносим JSON |
+| `shopbot import-session <site> --file X` | внася сесия на друга машина и я проверява |
 | `shopbot once [--dry-run]` | един пълен цикъл |
 | `shopbot run` | непрекъснат режим (това пуска systemd) |
 | `shopbot status` | какво има в базата, брой публикувани днес, последни събития |
@@ -280,6 +298,52 @@ BestSecret изписва имената по няколко начина — `"
 достъп, а Bazar.bg може да ограничи профил с много еднотипни обяви. Рискът е
 блокиран акаунт и той е реален. Затова лимитите по подразбиране са ниски —
 вдигай ги бавно и гледай какво става.
+
+---
+
+## Работа на сървъра
+
+Всички команди са в `~/Shop-Automation`, през venv-а: `./.venv/bin/shopbot ...`
+
+```bash
+sudo systemctl status shopbot        # работи ли
+sudo systemctl restart shopbot       # рестарт
+sudo systemctl stop shopbot          # спиране
+journalctl -u shopbot -f             # логът на живо
+journalctl -u shopbot --since today  # днешният лог
+```
+
+Услугата има `Restart=on-failure` с 60 секунди изчакване, така че сама се
+вдига след срив или рестарт на машината.
+
+### Обновяване на бота
+
+```bash
+cd ~/Shop-Automation
+git pull
+./.venv/bin/pip install -e .          # само ако pyproject.toml се е променил
+sudo systemctl restart shopbot
+```
+
+`config/config.yaml` се чете при всеки цикъл, така че промяна в праговете,
+марките или цените **не иска рестарт** — само `git pull` (или редакция на
+място). Рестарт трябва само при промяна в кода.
+
+Внимание при `git pull`: ако си редактирал `config/config.yaml` на сървъра
+(а филтрираните адреси се пипат точно там), pull-ът ще спре заради конфликт.
+Или редактирай конфига само на едно място и го комитвай, или преди pull:
+
+```bash
+git stash && git pull && git stash pop
+```
+
+### Проверка, че всичко е наред
+
+```bash
+./.venv/bin/shopbot status            # брояч на обяви, последни събития
+./.venv/bin/shopbot listings          # активните обяви
+ls -la data/                          # база, снимки, екранни снимки при грешка
+```
 
 ---
 

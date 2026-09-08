@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 from collections.abc import AsyncIterator, Sequence
@@ -82,6 +83,56 @@ class BrowserSession:
     async def new_page(self) -> Page:
         assert self.context, "сесията не е стартирана"
         return await self.context.new_page()
+
+    # ------------------------------------------------------- пренос на сесия
+
+    async def export_state(self, dest: Path) -> Path:
+        """Записва бисквитките и localStorage като преносим JSON.
+
+        Профилът на Chromium НЕ може просто да се копира между машини:
+        бисквитките са криптирани с ключ на операционната система (DPAPI под
+        Windows), затова профил, направен на Windows, не се чете от Linux.
+        Този JSON е в чист вид и се пренася без проблем.
+        """
+        assert self.context, "сесията не е стартирана"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        state = await self.context.storage_state()
+        dest.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        return dest
+
+    async def import_state(self, source: Path) -> tuple[int, int]:
+        """Влива изнесена сесия в текущия профил. Връща (бисквитки, origins)."""
+        assert self.context, "сесията не е стартирана"
+        state = json.loads(source.read_text(encoding="utf-8"))
+
+        cookies = state.get("cookies", [])
+        if cookies:
+            await self.context.add_cookies(cookies)
+
+        origins = state.get("origins", [])
+        if origins:
+            page = await self.context.new_page()
+            for origin in origins:
+                items = origin.get("localStorage", [])
+                if not items:
+                    continue
+                try:
+                    await page.goto(origin["origin"], wait_until="domcontentloaded")
+                    await page.evaluate(
+                        """
+                        (items) => {
+                          for (const { name, value } of items) {
+                            try { localStorage.setItem(name, value); } catch (e) {}
+                          }
+                        }
+                        """,
+                        items,
+                    )
+                except Exception as exc:
+                    log.warning("localStorage за %s не се пренесе: %s", origin["origin"], exc)
+            await page.close()
+
+        return len(cookies), len(origins)
 
 
 @asynccontextmanager

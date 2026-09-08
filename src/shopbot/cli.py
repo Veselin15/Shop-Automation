@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -88,6 +89,86 @@ def login(
                     "[yellow]Не разпознавам маркер за логнат профил.[/yellow] "
                     "Сесията все пак е запазена; ако не тръгне, оправи "
                     "logged_in_markers в config/selectors.yaml."
+                )
+        finally:
+            await session.stop()
+
+    asyncio.run(_run())
+
+
+@app.command("export-session")
+def export_session(
+    site: str = typer.Argument(..., help="bestsecret | bazar"),
+    out: str = typer.Option("", "--out", help="къде да запише JSON-а"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Изнася влязлата сесия като преносим JSON.
+
+    Профил на Chromium не се копира между Windows и Linux — бисквитките са
+    криптирани с ключ на операционната система. Този JSON се пренася.
+    """
+    setup_logging(verbose)
+    cfg, _, _ = _ctx()
+    dest = Path(out) if out else cfg.data_dir / "sessions" / f"{site}.json"
+
+    async def _run() -> None:
+        session = BrowserSession(site, cfg.profiles_dir / site, headless=True)
+        await session.start()
+        try:
+            path = await session.export_state(dest)
+            console.print(f"[green]Записах сесията в[/green] {path}")
+            console.print(
+                "Прехвърли я на сървъра и я внеси там:\n"
+                f"  scp {path} veski4a@192.168.0.101:~/Shop-Automation/\n"
+                f"  ./.venv/bin/shopbot import-session {site} --file ~/Shop-Automation/{dest.name}"
+            )
+        finally:
+            await session.stop()
+
+    asyncio.run(_run())
+
+
+@app.command("import-session")
+def import_session(
+    site: str = typer.Argument(..., help="bestsecret | bazar"),
+    file: str = typer.Option(..., "--file", help="JSON от export-session"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Внася изнесена сесия в профила на тази машина и проверява дали е валидна."""
+    setup_logging(verbose)
+    cfg, db, _ = _ctx()
+    source = Path(file)
+    if not source.exists():
+        raise typer.BadParameter(f"няма такъв файл: {source}")
+
+    async def _run() -> None:
+        session = BrowserSession(site, cfg.profiles_dir / site, headless=True)
+        await session.start()
+        try:
+            cookies, origins = await session.import_state(source)
+            console.print(f"Внесох {cookies} бисквитки и {origins} origin-а.")
+
+            page = await session.new_page()
+            check_url = (
+                cfg.source.base_url + "/home.htm"
+                if site == "bestsecret"
+                else cfg.selectors["bazar"]["my_ads_url"]
+            )
+            await page.goto(check_url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000)
+
+            markers = cfg.selectors[site].get("logged_in_markers")
+            if await any_present(page, markers):
+                console.print("[green]Сесията работи — профилът е логнат.[/green]")
+                db.log_event("login", f"{site}: внесена сесия")
+            else:
+                console.print(
+                    "[yellow]Не разпознавам логнат профил.[/yellow] Или сесията е "
+                    "изтекла, или logged_in_markers в selectors.yaml трябва да се "
+                    "обнови. Виж data/import_check.png"
+                )
+                await page.screenshot(
+                    path=str(cfg.data_dir / "import_check.png"), full_page=True
                 )
         finally:
             await session.stop()
