@@ -230,6 +230,7 @@ class BazarSink:
         await page.wait_for_timeout(3000)
 
         await self._fill_category(page, listing.category_id)
+        await self._fill_category_attributes(page, listing.category_id)
         await self._fill_description(page, listing.description)
         await self._fill_price(page, listing.price)
         await self._fill_location(page, self.cfg.listing.location)
@@ -256,12 +257,14 @@ class BazarSink:
         ad_id, ad_url = await self._detect_published(page)
         if not ad_id:
             error_text = await self._read_form_error(page)
+            empty = await self._unfilled_fields(page)
             shot = self.cfg.data_dir / f"publish_fail_{listing.product_id}.png"
             await page.screenshot(path=str(shot), full_page=True)
-            raise PublishError(
-                f"обявата не се публикува ({error_text or 'няма ясна грешка'}); "
-                f"останахме на {page.url}; снимка: {shot}"
-            )
+            parts = [f"обявата не се публикува ({error_text or 'няма ясна грешка'})"]
+            if empty:
+                parts.append(f"незапълнени полета: {empty}")
+            parts.append(f"снимка: {shot}")
+            raise PublishError("; ".join(parts))
 
         log.info("Bazar.bg: публикувана обява %s -> %s", ad_id, ad_url)
         return ad_id, ad_url
@@ -299,7 +302,7 @@ class BazarSink:
         от window.categoriesTree на самата форма).
         """
         ok = await page.evaluate(
-            """
+            r"""
             ([sel, id]) => {
               const hidden = document.querySelector(sel.form_category_id);
               if (!hidden) return false;
@@ -322,6 +325,96 @@ class BazarSink:
             raise PublishError(f"не мога да задам рубрика {category_id}")
         await self.pacer.micro_pause()
 
+    async def _fill_category_attributes(self, page: Page, category_id: int) -> None:
+        """Попълва полетата, които се появяват след избор на рубрика.
+
+        Bazar.bg добавя за някои рубрики задължителни падащи менюта (за очила
+        например "Вид"). Стойностите се задават в listing.category_attributes,
+        защото правилният избор зависи от стоката, а не може да се гадае —
+        първата опция при очилата е "Диоптрични", което би сложило обявата в
+        грешна ниша.
+        """
+        wanted = self.cfg.listing.category_attributes.get(category_id, {})
+        if not wanted:
+            return
+
+        applied = await page.evaluate(
+            r"""
+            ([form, wanted]) => {
+              const labelFor = el => {
+                let n = el;
+                for (let i = 0; i < 5 && n; i++, n = n.parentElement) {
+                  const t = n.querySelector && n.querySelector('.ab_text');
+                  if (t) return t.textContent.trim().replace(/\s+/g, ' ');
+                }
+                return '';
+              };
+              const done = [];
+              for (const el of document.querySelectorAll(form + ' select')) {
+                if (el.offsetParent === null) continue;
+                const keys = [el.name, el.id, labelFor(el)].filter(Boolean);
+                let value = null;
+                for (const k of Object.keys(wanted)) {
+                  if (keys.some(x => x.toLowerCase().includes(k.toLowerCase()))) {
+                    value = wanted[k];
+                    break;
+                  }
+                }
+                if (value === null) continue;
+                for (const option of el.options) {
+                  if (option.text.trim().toLowerCase() === value.toLowerCase()) {
+                    el.value = option.value;
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    done.push((el.name || el.id) + ' = ' + option.text.trim());
+                    break;
+                  }
+                }
+              }
+              return done;
+            }
+            """,
+            [self.sel["form"], wanted],
+        )
+        for entry in applied:
+            log.info("рубрична характеристика: %s", entry)
+        await self.pacer.micro_pause()
+
+    async def _unfilled_fields(self, page: Page) -> str:
+        """Кои видими полета са останали празни — за смислено съобщение при провал."""
+        try:
+            empty = await page.evaluate(
+                r"""
+                (form) => {
+                  const labelFor = el => {
+                    let n = el;
+                    for (let i = 0; i < 5 && n; i++, n = n.parentElement) {
+                      const t = n.querySelector && n.querySelector('.ab_text');
+                      if (t) return t.textContent.trim().replace(/\s+/g, ' ');
+                    }
+                    return '';
+                  };
+                  const out = [];
+                  for (const el of document.querySelectorAll(form + ' select')) {
+                    if (el.offsetParent === null) continue;
+                    if (el.value && el.value !== '0') continue;
+                    const options = [...el.options]
+                      .filter(o => o.value && o.value !== '0')
+                      .map(o => o.text.trim())
+                      .slice(0, 8);
+                    out.push(
+                      (labelFor(el) || el.name || el.id) +
+                      ' -> възможни: ' + options.join(' / ')
+                    );
+                  }
+                  return out;
+                }
+                """,
+                self.sel["form"],
+            )
+        except Exception:
+            return ""
+        return "; ".join(empty)
+
     async def _fill_description(self, page: Page, text: str) -> None:
         """Пише в Redactor редактора вътре в iframe-а.
 
@@ -337,7 +430,7 @@ class BazarSink:
         await self.pacer.micro_pause()
 
         await page.evaluate(
-            """
+            r"""
             ([sel, text]) => {
               const ta = document.querySelector(sel.form_description_textarea);
               if (ta) {
@@ -401,7 +494,7 @@ class BazarSink:
 
         # Понякога след запис се показва междинна страница с линк към обявата.
         href = await page.evaluate(
-            """
+            r"""
             (pat) => {
               const re = new RegExp(pat);
               for (const a of document.querySelectorAll('a[href]')) {

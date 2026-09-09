@@ -11,7 +11,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .browser import BrowserMissing, BrowserSession, any_present
+from .browser import (
+    BrowserMissing,
+    BrowserSession,
+    any_present,
+    require_locator,
+    type_like_human,
+)
 from .config import load_config
 from .db import Database
 from .humanize import Pacer
@@ -458,7 +464,7 @@ def calibrate(
                 raise typer.Exit(1)
 
             dump = await page.evaluate(
-                """
+                r"""
                 () => {
                   const forms = Array.from(document.querySelectorAll('form')).map(f => ({
                     action: f.action, id: f.id, cls: f.className,
@@ -562,6 +568,106 @@ def inspect(
             listing = build_listing(product, price, cfg.listing, category_id)
             console.print("\n[bold]Заглавие:[/bold] " + listing.title)
             console.print("[bold]Описание:[/bold]\n" + listing.description)
+        finally:
+            await session.stop()
+
+    _run_async(_run())
+
+
+@app.command("inspect-form")
+def inspect_form(
+    category: int = typer.Option(339, "--category", help="числово id на рубриката"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Показва всички полета на формата за обява СЛЕД избор на рубрика.
+
+    Част от полетата на Bazar.bg се появяват чак когато рубриката е избрана
+    (например "Вид"). Командата ги изкарва с етикетите и опциите им, за да
+    се допълни listing.category_attributes.
+    """
+    setup_logging(verbose)
+    cfg, _, _ = _ctx()
+    sel = cfg.selectors["bazar"]
+
+    async def _run() -> None:
+        session = BrowserSession(
+            "bazar", cfg.profiles_dir / "bazar", cfg.runtime.headless,
+            seed_state=cfg.session_file("bazar"),
+        )
+        await session.start()
+        try:
+            sink = BazarSink(cfg, session, Pacer(cfg.runtime))
+            page = await session.new_page()
+            await sink.ensure_logged_in(page)
+
+            await page.goto(sel["publish_url"], wait_until="domcontentloaded")
+            await sink._handle_cookies(page)
+            await page.wait_for_timeout(2500)
+
+            title = await require_locator(page, sel["form_title"], "заглавие")
+            await type_like_human(title, "Слънчеви очила Carrera проба на формата")
+            await page.wait_for_timeout(3000)
+
+            await sink._fill_category(page, category)
+            await page.wait_for_timeout(4000)
+
+            data = await page.evaluate(
+                r"""
+                () => {
+                  const labelFor = el => {
+                    let n = el;
+                    for (let i = 0; i < 5 && n; i++, n = n.parentElement) {
+                      const t = n.querySelector && n.querySelector('.ab_text');
+                      if (t) return t.textContent.trim().replace(/\s+/g, ' ');
+                    }
+                    return '';
+                  };
+                  const out = [];
+                  for (const el of document.querySelectorAll(
+                         '#saveAdForm select, #saveAdForm input, #saveAdForm textarea')) {
+                    if (el.type === 'hidden') continue;
+                    out.push({
+                      tag: el.tagName,
+                      type: el.type || '',
+                      name: el.name || '',
+                      id: el.id || '',
+                      label: labelFor(el),
+                      visible: el.offsetParent !== null,
+                      value: (el.value || '').slice(0, 30),
+                      options: el.tagName === 'SELECT'
+                        ? [...el.options].map(o => o.value + ' = ' + o.text.trim().slice(0, 30))
+                        : null,
+                    });
+                  }
+                  return out;
+                }
+                """
+            )
+
+            shot = cfg.data_dir / f"form_category_{category}.png"
+            await page.screenshot(path=str(shot), full_page=True)
+
+            table = Table(title=f"видими полета след рубрика {category}")
+            table.add_column("етикет")
+            table.add_column("поле")
+            table.add_column("стойност")
+            for f in data:
+                if not f["visible"]:
+                    continue
+                name = f["name"] or f["id"] or f["tag"]
+                table.add_row(
+                    f["label"][:30], f"{f['tag'].lower()} {name}"[:36], f["value"][:22]
+                )
+            console.print(table)
+
+            console.print("\n[bold]Падащи менюта и опциите им:[/bold]")
+            for f in data:
+                if f["options"] and f["visible"]:
+                    name = f["name"] or f["id"]
+                    console.print(f"  [cyan]{name}[/cyan]  ({f['label'][:30]})")
+                    for option in f["options"][:12]:
+                        console.print(f"      {option}")
+            console.print(f"\nСнимка на формата: {shot}")
         finally:
             await session.stop()
 

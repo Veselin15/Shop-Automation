@@ -131,6 +131,9 @@ class ListingConfig(BaseModel):
     category_map: dict[str, int] = Field(default_factory=dict)
     # Българска дума пред заглавието, за да се намира обявата при търсене.
     title_prefix: dict[str, str] = Field(default_factory=dict)
+    # Полета, които Bazar.bg показва чак след избор на рубрика (напр. "Вид").
+    # Ключът е числото на рубриката, вътре: етикет или име на полето -> опция.
+    category_attributes: dict[int, dict[str, str]] = Field(default_factory=dict)
     phone: str = ""
     condition: str = "Ново"
     max_images: int = 6
