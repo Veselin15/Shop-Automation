@@ -32,7 +32,7 @@ from .notify import (
 from .orchestrator import Orchestrator
 from .pricing import compute_price, format_money
 from .selection import evaluate
-from .sinks.bazar import BazarSink
+from .sinks.bazar import JS_FIELD_HELPERS, BazarSink
 from .sources.bestsecret import BestSecretSource, looks_logged_in
 
 app = typer.Typer(add_completion=False, help="BestSecret -> Bazar.bg автоматизация")
@@ -613,18 +613,11 @@ def inspect_form(
 
             data = await page.evaluate(
                 r"""
-                () => {
-                  const labelFor = el => {
-                    let n = el;
-                    for (let i = 0; i < 5 && n; i++, n = n.parentElement) {
-                      const t = n.querySelector && n.querySelector('.ab_text');
-                      if (t) return t.textContent.trim().replace(/\s+/g, ' ');
-                    }
-                    return '';
-                  };
+                (form) => {
+                  HELPERS
                   const out = [];
                   for (const el of document.querySelectorAll(
-                         '#saveAdForm select, #saveAdForm input, #saveAdForm textarea')) {
+                         form + ' select, ' + form + ' input, ' + form + ' textarea')) {
                     if (el.type === 'hidden') continue;
                     out.push({
                       tag: el.tagName,
@@ -632,6 +625,8 @@ def inspect_form(
                       name: el.name || '',
                       id: el.id || '',
                       label: labelFor(el),
+                      choice: (el.type === 'radio' || el.type === 'checkbox')
+                        ? choiceText(el) : '',
                       visible: el.offsetParent !== null,
                       value: (el.value || '').slice(0, 30),
                       options: el.tagName === 'SELECT'
@@ -641,7 +636,8 @@ def inspect_form(
                   }
                   return out;
                 }
-                """
+                """.replace("HELPERS", JS_FIELD_HELPERS),
+                cfg.selectors["bazar"]["form"],
             )
 
             shot = cfg.data_dir / f"form_category_{category}.png"
@@ -656,9 +652,22 @@ def inspect_form(
                     continue
                 name = f["name"] or f["id"] or f["tag"]
                 table.add_row(
-                    f["label"][:30], f"{f['tag'].lower()} {name}"[:36], f["value"][:22]
+                    f["label"][:28],
+                    f"{f['tag'].lower()} {name}"[:30],
+                    (f["choice"] or f["value"])[:26],
                 )
             console.print(table)
+
+            console.print("\n[bold]Радио бутони и точният им текст:[/bold]")
+            seen_groups: set[str] = set()
+            for f in data:
+                if f["type"] not in ("radio", "checkbox") or not f["visible"]:
+                    continue
+                key = f["name"] or f["id"]
+                if key not in seen_groups:
+                    seen_groups.add(key)
+                    console.print(f"  [cyan]{key}[/cyan]  ({f['label'][:30]})")
+                console.print(f"      {f['value']} = {f['choice'][:45]}")
 
             console.print("\n[bold]Падащи менюта и опциите им:[/bold]")
             for f in data:

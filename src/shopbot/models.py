@@ -91,6 +91,8 @@ class Listing:
     price: float = 0.0
     currency: str = "EUR"
     category_id: int = 0
+    # Категорията в източника — от нея зависи "Вид" (Мъжки/Дамски).
+    category_key: str = ""
     image_paths: list[str] = field(default_factory=list)
     bazar_id: str | None = None
     bazar_url: str | None = None

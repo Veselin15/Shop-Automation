@@ -94,5 +94,6 @@ def build_listing(
         price=price.final,
         currency=price.currency,
         category_id=category_id,
+        category_key=product.category_key,
         content_hash=product.content_hash(),
     )

@@ -186,6 +186,32 @@ def test_markup_keys_match_real_category_keys(real):
     assert not unknown, f"markup_by_category сочи несъществуващи категории: {unknown}"
 
 
+def test_every_category_declares_its_bazar_type(real):
+    """Bazar.bg иска "Изберете вид" (Мъжки/Дамски) за всяка рубрика.
+
+    Мъжките и дамските очила са в една и съща рубрика 339, така че видът
+    се извежда от категорията в BestSecret — липсва ли, формата не тръгва.
+    """
+    missing = [
+        c.key
+        for c in real.source.categories
+        if not real.listing.category_attributes.get(c.key)
+    ]
+    assert not missing, f"без 'Изберете вид': {missing}"
+
+
+def test_gendered_categories_get_the_matching_type(real):
+    for key, attrs in real.listing.category_attributes.items():
+        expected = "Дамски" if key.endswith("_women") else "Мъжки"
+        assert attrs.get("Изберете вид") == expected, f"{key}: {attrs}"
+
+
+def test_shared_form_defaults_are_set(real):
+    """Състояние и доставка са задължителни на всяка обява."""
+    assert real.listing.form_defaults.get("Състояние")
+    assert real.listing.form_defaults.get("Доставка за сметка на")
+
+
 def test_every_source_category_has_a_bazar_category(real):
     missing = [
         c.key for c in real.source.categories if not real.listing.category_map.get(c.key)

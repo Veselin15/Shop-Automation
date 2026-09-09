@@ -48,6 +48,37 @@ LOGIN_PATH = "/user/login"
 
 CYRILLIC = re.compile(r"[\u0400-\u04FF]")
 
+# Bazar.bg не е последователен къде държи етикета на едно поле, затова
+# и инспекторът, и попълването ползват едни и същи помощни функции.
+JS_FIELD_HELPERS = r"""
+              const labelFor = el => {
+                let n = el;
+                for (let i = 0; i < 6 && n; i++, n = n.parentElement) {
+                  const t = n.querySelector && n.querySelector('.ab_text');
+                  if (t) return t.textContent.trim().replace(/\s+/g, ' ');
+                }
+                return '';
+              };
+              // Текстът до радио бутона: <label for>, обгръщащ <label>, или
+              // текстът на съседа. Bazar.bg не е последователен.
+              const choiceText = el => {
+                if (el.id) {
+                  const l = document.querySelector('label[for="' + el.id + '"]');
+                  if (l) return l.textContent.trim().replace(/\s+/g, ' ');
+                }
+                const wrap = el.closest('label');
+                if (wrap) return wrap.textContent.trim().replace(/\s+/g, ' ');
+                let n = el.nextSibling;
+                while (n) {
+                  const t = (n.textContent || '').trim().replace(/\s+/g, ' ');
+                  if (t) return t;
+                  n = n.nextSibling;
+                }
+                const parent = el.parentElement;
+                return parent ? parent.textContent.trim().replace(/\s+/g, ' ').slice(0, 40) : '';
+              };
+"""
+
 MANUAL_LOGIN_HINT = (
     "Направи сесията ръчно и я пренеси: на компютъра си пусни "
     "`shopbot login bazar` (там въвеждаш и кода), после "
@@ -230,7 +261,7 @@ class BazarSink:
         await page.wait_for_timeout(3000)
 
         await self._fill_category(page, listing.category_id)
-        await self._fill_category_attributes(page, listing.category_id)
+        await self._fill_form_fields(page, listing.category_key)
         await self._fill_description(page, listing.description)
         await self._fill_price(page, listing.price)
         await self._fill_location(page, self.cfg.listing.location)
@@ -325,90 +356,124 @@ class BazarSink:
             raise PublishError(f"не мога да задам рубрика {category_id}")
         await self.pacer.micro_pause()
 
-    async def _fill_category_attributes(self, page: Page, category_id: int) -> None:
+    async def _fill_form_fields(self, page: Page, category_key: str) -> None:
         """Попълва полетата, които се появяват след избор на рубрика.
 
-        Bazar.bg добавя за някои рубрики задължителни падащи менюта (за очила
-        например "Вид"). Стойностите се задават в listing.category_attributes,
-        защото правилният избор зависи от стоката, а не може да се гадае —
-        първата опция при очилата е "Диоптрични", което би сложило обявата в
-        грешна ниша.
+        Bazar.bg добавя задължителни полета според рубриката: "Изберете вид"
+        (Мъжки/Дамски), "Състояние", "Доставка за сметка на". Стойностите се
+        задават в конфига, а не се избират автоматично — грешен избор при
+        доставката значи ти да плащаш куриера, а грешен "вид" вкарва обявата
+        в чужда ниша.
+
+        Полето "Вид" зависи от категорията в BestSecret, не от рубриката:
+        мъжките и дамските очила са в една и съща рубрика 339.
         """
-        wanted = self.cfg.listing.category_attributes.get(category_id, {})
+        wanted = dict(self.cfg.listing.form_defaults)
+        wanted.update(self.cfg.listing.category_attributes.get(category_key, {}))
         if not wanted:
             return
 
-        applied = await page.evaluate(
+        result = await page.evaluate(
             r"""
             ([form, wanted]) => {
-              const labelFor = el => {
-                let n = el;
-                for (let i = 0; i < 5 && n; i++, n = n.parentElement) {
-                  const t = n.querySelector && n.querySelector('.ab_text');
-                  if (t) return t.textContent.trim().replace(/\s+/g, ' ');
+              HELPERS
+              const matchKey = labels => {
+                for (const key of Object.keys(wanted)) {
+                  const needle = key.toLowerCase();
+                  if (labels.some(l => l && l.toLowerCase().includes(needle))) return key;
                 }
-                return '';
+                return null;
               };
+
               const done = [];
+              const missed = [];
+
               for (const el of document.querySelectorAll(form + ' select')) {
                 if (el.offsetParent === null) continue;
-                const keys = [el.name, el.id, labelFor(el)].filter(Boolean);
-                let value = null;
-                for (const k of Object.keys(wanted)) {
-                  if (keys.some(x => x.toLowerCase().includes(k.toLowerCase()))) {
-                    value = wanted[k];
-                    break;
-                  }
-                }
-                if (value === null) continue;
+                const key = matchKey([el.name, el.id, labelFor(el)]);
+                if (!key) continue;
+                const target = wanted[key].toLowerCase();
+                let hit = null;
                 for (const option of el.options) {
-                  if (option.text.trim().toLowerCase() === value.toLowerCase()) {
-                    el.value = option.value;
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    done.push((el.name || el.id) + ' = ' + option.text.trim());
-                    break;
-                  }
+                  if (option.text.trim().toLowerCase() === target) { hit = option; break; }
+                }
+                if (hit) {
+                  el.value = hit.value;
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  done.push(key + ' = ' + hit.text.trim());
+                } else {
+                  missed.push(key + ' -> няма опция "' + wanted[key] + '"; има: ' +
+                    [...el.options].map(o => o.text.trim()).filter(Boolean).join(' / '));
                 }
               }
-              return done;
+
+              const groups = {};
+              for (const el of document.querySelectorAll(
+                     form + ' input[type=radio], ' + form + ' input[type=checkbox]')) {
+                if (el.offsetParent === null) continue;
+                (groups[el.name] = groups[el.name] || []).push(el);
+              }
+              for (const [name, items] of Object.entries(groups)) {
+                const key = matchKey([name, labelFor(items[0])]);
+                if (!key) continue;
+                const target = wanted[key].toLowerCase();
+                let hit = null;
+                for (const el of items) {
+                  if (choiceText(el).toLowerCase().startsWith(target)) { hit = el; break; }
+                }
+                if (hit) {
+                  hit.checked = true;
+                  hit.dispatchEvent(new Event('change', { bubbles: true }));
+                  hit.dispatchEvent(new Event('click', { bubbles: true }));
+                  done.push(key + ' = ' + choiceText(hit));
+                } else {
+                  missed.push(key + ' -> няма избор "' + wanted[key] + '"; има: ' +
+                    items.map(choiceText).filter(Boolean).join(' / '));
+                }
+              }
+              return { done, missed };
             }
-            """,
+            """.replace("HELPERS", JS_FIELD_HELPERS),
             [self.sel["form"], wanted],
         )
-        for entry in applied:
-            log.info("рубрична характеристика: %s", entry)
+
+        for entry in result["done"]:
+            log.info("поле от рубриката: %s", entry)
+        if result["missed"]:
+            raise PublishError(
+                "стойност от конфига не съвпада с формата: "
+                + "; ".join(result["missed"])
+            )
         await self.pacer.micro_pause()
 
     async def _unfilled_fields(self, page: Page) -> str:
-        """Кои видими полета са останали празни — за смислено съобщение при провал."""
+        """Кои задължителни полета са останали празни — за смислен доклад при провал."""
         try:
             empty = await page.evaluate(
                 r"""
                 (form) => {
-                  const labelFor = el => {
-                    let n = el;
-                    for (let i = 0; i < 5 && n; i++, n = n.parentElement) {
-                      const t = n.querySelector && n.querySelector('.ab_text');
-                      if (t) return t.textContent.trim().replace(/\s+/g, ' ');
-                    }
-                    return '';
-                  };
+                  HELPERS
                   const out = [];
                   for (const el of document.querySelectorAll(form + ' select')) {
                     if (el.offsetParent === null) continue;
                     if (el.value && el.value !== '0') continue;
-                    const options = [...el.options]
-                      .filter(o => o.value && o.value !== '0')
-                      .map(o => o.text.trim())
-                      .slice(0, 8);
-                    out.push(
-                      (labelFor(el) || el.name || el.id) +
-                      ' -> възможни: ' + options.join(' / ')
-                    );
+                    out.push((labelFor(el) || el.name || el.id) + ' -> възможни: ' +
+                      [...el.options].filter(o => o.value && o.value !== '0')
+                        .map(o => o.text.trim()).slice(0, 8).join(' / '));
+                  }
+                  const groups = {};
+                  for (const el of document.querySelectorAll(form + ' input[type=radio]')) {
+                    if (el.offsetParent === null) continue;
+                    (groups[el.name] = groups[el.name] || []).push(el);
+                  }
+                  for (const [name, items] of Object.entries(groups)) {
+                    if (items.some(el => el.checked)) continue;
+                    out.push((labelFor(items[0]) || name) + ' -> възможни: ' +
+                      items.map(choiceText).filter(Boolean).join(' / '));
                   }
                   return out;
                 }
-                """,
+                """.replace("HELPERS", JS_FIELD_HELPERS),
                 self.sel["form"],
             )
         except Exception:
