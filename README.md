@@ -74,34 +74,35 @@ py -3.12 -m venv .venv ; .\.venv\Scripts\pip install -e . ; .\.venv\Scripts\play
 
 ### Как се пускат командите
 
-`shopbot` живее вътре във venv-а, не в системния PATH. Затова
-`shopbot login bestsecret` дава *command not found*, ако не си направил едно
-от двете:
+`shopbot` живее вътре във venv-а, не в системния PATH, а всяка нова SSH сесия
+започва без активиран venv. Затова в корена на проекта има обвивка, която
+работи винаги:
 
-**Вариант А — активирай venv-а веднъж на сесия** (после пишеш просто `shopbot`):
+```bash
+./shopbot status
+```
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+.\shopbot.ps1 status
 ```
+
+Обвивката вика двоичния файл от venv-а по абсолютен път — върши работа и от
+скриптове, и от cron, и веднага след `git pull`.
+
+Ако предпочиташ да пишеш само `shopbot`, активирай venv-а веднъж на сесия:
 
 ```bash
 source .venv/bin/activate
 ```
 
-**Вариант Б — извикай го с пълния път** (така работи и в скриптове и cron):
-
 ```powershell
-.\.venv\Scripts\shopbot.exe status
+.\.venv\Scripts\Activate.ps1
 ```
 
-```bash
-./.venv/bin/shopbot status
-```
+Командите по-долу са писани като `shopbot ...`; сложи `./` отпред, ако не си
+активирал venv. Пускат се от корена на проекта, не от `src/`.
 
-Командите по-долу са писани за активиран venv. Пускат се от корена на
-проекта (`Shop-Automation`), не от `src/`.
-
-Ако командата липсва дори при пълен път, пакетът не е инсталиран във venv-а:
+Ако обвивката се оплаче, че липсва двоичният файл, проектът не е инсталиран:
 
 ```bash
 ./.venv/bin/pip install -e .

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Пуска shopbot от venv-а на проекта, без значение дали е активиран.
+#
+# Всяка нова SSH сесия започва без активиран venv, а `shopbot` живее вътре в
+# него — оттам вечното "command not found". С това се пише ./shopbot и работи
+# винаги, включително от cron и от скриптове.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN="$DIR/.venv/bin/shopbot"
+
+if [ ! -x "$BIN" ]; then
+    echo "Няма $BIN" >&2
+    echo "Инсталирай проекта: bash deploy/install.sh" >&2
+    exit 1
+fi
+
+exec "$BIN" "$@"

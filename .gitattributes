@@ -1,0 +1,4 @@
+# Скриптове за Linux трябва да са с LF. CRLF в shebang реда дава
+# "bad interpreter: /usr/bin/env bash^M" — грешка, която не подсказва нищо.
+shopbot text eol=lf
+*.sh text eol=lf
