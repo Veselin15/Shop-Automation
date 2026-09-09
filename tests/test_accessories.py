@@ -7,7 +7,7 @@
 import pytest
 
 from shopbot.config import PopularityConfig, SelectionConfig, load_config
-from shopbot.listing import build_description, label_to_path, path_to_label
+from shopbot.listing import build_description, build_title
 from shopbot.models import Product, Size
 from shopbot.pricing import compute_price
 from shopbot.selection import evaluate
@@ -196,12 +196,19 @@ def test_every_source_category_has_a_bazar_category(real):
 # ------------------------------------------------------- дребни помощни
 
 
-def test_category_path_roundtrip():
-    path = ["Мода", "Аксесоари", "Портфейли, портмонета"]
-    label = path_to_label(path)
-    assert label == "Мода > Аксесоари > Портфейли, портмонета"
-    assert label_to_path(label) == path
-    assert path_to_label(label) == label  # вече е стринг, не се пипа
+def test_title_starts_with_a_bulgarian_word(real):
+    """Bazar.bg се търси на кирилица; чисто английско заглавие не се намира."""
+    product = accessory(brand="Carrera", name="Sunglasses Hyperfit 23/S")
+    title = build_title(product, real.listing)
+    assert title.startswith("Слънчеви очила"), title
+    assert len(title) >= 15, "сайтът иска поне 15 знака"
+
+
+def test_every_category_has_a_bulgarian_title_prefix(real):
+    missing = [
+        c.key for c in real.source.categories if not real.listing.title_prefix.get(c.key)
+    ]
+    assert not missing, f"без български префикс: {missing}"
 
 
 def test_paged_url_keeps_existing_filters():

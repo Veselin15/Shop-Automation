@@ -16,20 +16,6 @@ SOURCE_MENTIONS = re.compile(
 WHITESPACE = re.compile(r"[ \t]+")
 BLANK_LINES = re.compile(r"\n{3,}")
 
-# Пътят до категорията се пази като един стринг, за да остане четим и в базата,
-# и в `shopbot listings`.
-CATEGORY_SEP = " > "
-
-
-def path_to_label(path: list[str] | str) -> str:
-    if isinstance(path, str):
-        return path
-    return CATEGORY_SEP.join(p.strip() for p in path if p and p.strip())
-
-
-def label_to_path(label: str) -> list[str]:
-    return [p.strip() for p in (label or "").split(CATEGORY_SEP) if p.strip()]
-
 
 def clean_source_text(text: str) -> str:
     text = SOURCE_MENTIONS.sub("", text or "")
@@ -48,7 +34,14 @@ def size_hint(product: Product, limit: int = 4) -> str:
 
 
 def build_title(product: Product, cfg: ListingConfig) -> str:
+    """Заглавието започва с българска дума.
+
+    Bazar.bg се търси на кирилица, а имената в BestSecret са на английски —
+    "Sunglasses Roxie" не се намира от никого. Освен това сайтът иска поне
+    15 символа в заглавието.
+    """
     raw = cfg.title_template.format(
+        prefix=cfg.title_prefix.get(product.category_key, ""),
         brand=product.brand,
         name=product.name,
         size_hint=size_hint(product, limit=2),
@@ -92,7 +85,7 @@ def build_listing(
     product: Product,
     price: PriceBreakdown,
     cfg: ListingConfig,
-    category: list[str] | str,
+    category_id: int,
 ) -> Listing:
     return Listing(
         product_id=product.id,
@@ -100,6 +93,6 @@ def build_listing(
         description=build_description(product, price, cfg),
         price=price.final,
         currency=price.currency,
-        category_label=path_to_label(category),
+        category_id=category_id,
         content_hash=product.content_hash(),
     )

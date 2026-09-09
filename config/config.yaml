@@ -244,21 +244,43 @@ listing:
 
   # Път в дървото на Bazar.bg, ниво по ниво. Пътят, а не само последният
   # етикет, защото "Мъжки" се среща и под Часовници, и под Дрехи, и под Обувки.
+  # Числови id-та на рубриките в Bazar.bg, взети от window.categoriesTree
+  # на самата форма. Числото е това, което формата праща — по-надеждно е от
+  # кликане по имена, а и AI подсказката на сайта връща същите числа.
   category_map:
-    sunglasses_women:        ["Мода", "Аксесоари", "Слънчеви и диоптрични очила"]
-    sunglasses_men:          ["Мода", "Аксесоари", "Слънчеви и диоптрични очила"]
-    watches_women:           ["Мода", "Часовници", "Дамски"]
-    watches_men:             ["Мода", "Часовници", "Мъжки"]
-    bags_women:              ["Мода", "Аксесоари", "Чанти"]
-    bags_men:                ["Мода", "Аксесоари", "Чанти"]
-    small_accessories_women: ["Мода", "Аксесоари", "Портфейли, портмонета"]
-    small_accessories_men:   ["Мода", "Аксесоари", "Портфейли, портмонета"]
-    hats_women:              ["Мода", "Аксесоари", "Шапки"]
-    hats_men:                ["Мода", "Аксесоари", "Шапки"]
-    scarves_women:           ["Мода", "Аксесоари", "Шалове"]
-    scarves_men:             ["Мода", "Аксесоари", "Шалове"]
+    sunglasses_women:        339    # Мода > Аксесоари > Слънчеви и диоптрични очила
+    sunglasses_men:          339
+    watches_women:           335    # Мода > Часовници > Дамски
+    watches_men:             336    # Мода > Часовници > Мъжки
+    bags_women:              338    # Мода > Аксесоари > Чанти
+    bags_men:                338
+    small_accessories_women: 457    # Мода > Аксесоари > Портфейли, портмонета
+    small_accessories_men:   457
+    hats_women:              340    # Мода > Аксесоари > Шапки
+    hats_men:                340
+    scarves_women:           1103   # Мода > Аксесоари > Шалове
+    scarves_men:             1103
 
-  title_template: "{brand} {name}"
+  # Български дума пред заглавието. Bazar.bg се търси на кирилица, а имената
+  # от BestSecret са на английски — без това обявата не се намира.
+  title_prefix:
+    sunglasses_women: "Слънчеви очила"
+    sunglasses_men: "Слънчеви очила"
+    watches_women: "Дамски часовник"
+    watches_men: "Мъжки часовник"
+    bags_women: "Дамска чанта"
+    bags_men: "Мъжка чанта"
+    small_accessories_women: "Портфейл"
+    small_accessories_men: "Портфейл"
+    hats_women: "Шапка"
+    hats_men: "Шапка"
+    scarves_women: "Шал"
+    scarves_men: "Шал"
+
+  # Телефон за обявата. Оставено празно = ползва се този от профила.
+  phone: ""
+
+  title_template: "{prefix} {brand} {name}"
   title_max_len: 70
 
   description_template: |

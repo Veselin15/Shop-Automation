@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS listings (
     title           TEXT DEFAULT '',
     price           REAL DEFAULT 0,
     currency        TEXT DEFAULT 'EUR',
-    category_label  TEXT DEFAULT '',
+    category_id     INTEGER DEFAULT 0,
     state           TEXT DEFAULT 'candidate',
     content_hash    TEXT DEFAULT '',
     attempts        INTEGER DEFAULT 0,
@@ -84,7 +84,18 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Дребни промени по схемата на вече съществуваща база."""
+        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(listings)")}
+        # Категорията беше текстов път ("Мода > Аксесоари"), сега е числово id.
+        if "category_label" in columns and "category_id" not in columns:
+            self.conn.execute("ALTER TABLE listings DROP COLUMN category_label")
+            self.conn.execute(
+                "ALTER TABLE listings ADD COLUMN category_id INTEGER DEFAULT 0"
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -170,17 +181,17 @@ class Database:
         with self.tx() as c:
             c.execute(
                 """
-                INSERT INTO listings (product_id, title, price, currency, category_label,
+                INSERT INTO listings (product_id, title, price, currency, category_id,
                                       state, content_hash)
                 VALUES (?,?,?,?,?,?,?)
                 ON CONFLICT(product_id) DO UPDATE SET
                     title=excluded.title, price=excluded.price, currency=excluded.currency,
-                    category_label=excluded.category_label, content_hash=excluded.content_hash
+                    category_id=excluded.category_id, content_hash=excluded.content_hash
                 WHERE listings.state IN ('candidate','failed')
                 """,
                 (
                     listing.product_id, listing.title, listing.price, listing.currency,
-                    listing.category_label, str(ListingState.CANDIDATE), listing.content_hash,
+                    listing.category_id, str(ListingState.CANDIDATE), listing.content_hash,
                 ),
             )
 

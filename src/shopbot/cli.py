@@ -558,8 +558,8 @@ def inspect(
                 table.add_row("цена отхвърлена", price.rejected)
             console.print(table)
 
-            path = cfg.listing.category_map.get(category, ["Мода", "Аксесоари"])
-            listing = build_listing(product, price, cfg.listing, path)
+            category_id = cfg.listing.category_map.get(category, 0)
+            listing = build_listing(product, price, cfg.listing, category_id)
             console.print("\n[bold]Заглавие:[/bold] " + listing.title)
             console.print("[bold]Описание:[/bold]\n" + listing.description)
         finally:

@@ -39,13 +39,14 @@ from ..browser import (
 )
 from ..config import Config
 from ..humanize import Pacer
-from ..listing import label_to_path
 from ..models import Listing
 
 log = logging.getLogger(__name__)
 
 SITE = "bazar"
 LOGIN_PATH = "/user/login"
+
+CYRILLIC = re.compile(r"[\u0400-\u04FF]")
 
 MANUAL_LOGIN_HINT = (
     "Направи сесията ръчно и я пренеси: на компютъра си пусни "
@@ -213,45 +214,44 @@ class BazarSink:
         self, listing: Listing, images: list[Path], page: Page, dry_run: bool = False
     ) -> tuple[str, str]:
         """Връща (bazar_id, bazar_url). При dry_run попълва формата и спира."""
+        self._check_content(listing)
+
         await page.goto(self.sel["publish_url"], wait_until="domcontentloaded")
         await self._handle_cookies(page)
+        await page.wait_for_timeout(2000)
 
         if not await self.is_logged_in(page):
             raise AuthWallError(SITE, "изхвърлени сме от сесията на формата за обява")
 
-        await self._fill_category(page, listing.category_label)
-        await self.pacer.micro_pause()
-
         title = await require_locator(page, self.sel["form_title"], "заглавие")
         await type_like_human(title, listing.title)
-        await self.pacer.micro_pause()
+        # Заглавието задейства AI подсказка за рубрика; изчакваме я, за да не
+        # презапише нашата категория след това.
+        await page.wait_for_timeout(3000)
 
-        description = await require_locator(page, self.sel["form_description"], "описание")
-        await type_like_human(description, listing.description)
-        await self.pacer.micro_pause()
-
-        price = await require_locator(page, self.sel["form_price"], "цена")
-        await type_like_human(price, f"{listing.price:.2f}")
-        await self.pacer.micro_pause()
-
-        await self._select_if_present(page, self.sel.get("form_currency"), listing.currency)
+        await self._fill_category(page, listing.category_id)
+        await self._fill_description(page, listing.description)
+        await self._fill_price(page, listing.price)
         await self._fill_location(page, self.cfg.listing.location)
-        await self._select_if_present(
-            page, self.sel.get("form_condition"), self.cfg.listing.condition
-        )
+
+        if self.cfg.listing.phone:
+            phone = await first_locator(page, self.sel.get("form_phone"), 2000)
+            if phone is not None:
+                await type_like_human(phone, self.cfg.listing.phone)
 
         if images:
             await self._upload_images(page, images)
 
         if dry_run:
-            log.info("DRY RUN: формата е попълнена, но не се изпраща")
-            await page.screenshot(path=str(self.cfg.data_dir / "dry_run_form.png"), full_page=True)
+            shot = self.cfg.data_dir / "dry_run_form.png"
+            await page.screenshot(path=str(shot), full_page=True)
+            log.info("DRY RUN: формата е попълнена, не се изпраща. Снимка: %s", shot)
             return ("", "")
 
         submit = await require_locator(page, self.sel["form_submit"], "бутон за публикуване")
         await submit.click()
         await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(5000)
 
         ad_id, ad_url = await self._detect_published(page)
         if not ad_id:
@@ -260,11 +260,137 @@ class BazarSink:
             await page.screenshot(path=str(shot), full_page=True)
             raise PublishError(
                 f"обявата не се публикува ({error_text or 'няма ясна грешка'}); "
-                f"снимка на екрана: {shot}"
+                f"останахме на {page.url}; снимка: {shot}"
             )
 
         log.info("Bazar.bg: публикувана обява %s -> %s", ad_id, ad_url)
         return ad_id, ad_url
+
+    def _check_content(self, listing: Listing) -> None:
+        """Правилата на Bazar.bg, проверени преди изобщо да отворим формата.
+
+        По-добре е обявата да отпадне тук, отколкото да изяде опит за
+        публикуване и да остане "failed" заради нещо напълно предвидимо.
+        Праговете са от съобщенията в самата форма.
+        """
+        min_title = int(self.sel.get("min_title_len", 15))
+        min_descr = int(self.sel.get("min_description_len", 40))
+
+        if len(listing.title) < min_title:
+            raise PublishError(
+                f"заглавието е {len(listing.title)} знака, сайтът иска поне {min_title}"
+            )
+        if len(listing.description) < min_descr:
+            raise PublishError(
+                f"описанието е {len(listing.description)} знака, "
+                f"сайтът иска поне {min_descr}"
+            )
+        if not CYRILLIC.search(listing.description):
+            raise PublishError("Bazar.bg изисква кирилица в описанието")
+        if not listing.category_id:
+            raise PublishError("няма Bazar.bg рубрика (виж listing.category_map)")
+
+    async def _fill_category(self, page: Page, category_id: int) -> None:
+        """Задава рубриката като число.
+
+        Видимият <select id=rubChooser> се пълни от JS и стои празен, докато
+        не се мине през джаджата — но формата праща скритото поле category_id.
+        Затова се пише то, със същите числа, които сайтът си използва (взети
+        от window.categoriesTree на самата форма).
+        """
+        ok = await page.evaluate(
+            """
+            ([sel, id]) => {
+              const hidden = document.querySelector(sel.form_category_id);
+              if (!hidden) return false;
+              hidden.value = String(id);
+              hidden.dispatchEvent(new Event('change', { bubbles: true }));
+
+              // Ако списъкът вече е попълнен, вдигаме и него — иначе формата
+              // изглежда наполовина празна и скрипт може да я презапише.
+              const select = document.querySelector(sel.form_category_select);
+              if (select && select.options.length) {
+                select.value = String(id);
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+              return hidden.value === String(id);
+            }
+            """,
+            [self.sel, category_id],
+        )
+        if not ok:
+            raise PublishError(f"не мога да задам рубрика {category_id}")
+        await self.pacer.micro_pause()
+
+    async def _fill_description(self, page: Page, text: str) -> None:
+        """Пише в Redactor редактора вътре в iframe-а.
+
+        Видимото поле е contenteditable body в #redactorIframe; скритият
+        textarea#descr се пълни от редактора при изпращане. Пишем и в двете:
+        редактора, за да е коректно състоянието му, и textarea-та като
+        подсигуровка, ако скриптът не се задейства.
+        """
+        frame = page.frame_locator(self.sel["form_description_frame"])
+        body = frame.locator(self.sel["form_description_body"])
+        await body.click()
+        await body.fill(text)
+        await self.pacer.micro_pause()
+
+        await page.evaluate(
+            """
+            ([sel, text]) => {
+              const ta = document.querySelector(sel.form_description_textarea);
+              if (ta) {
+                ta.value = text;
+                ta.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }
+            """,
+            [self.sel, text],
+        )
+
+    async def _fill_price(self, page: Page, price: float) -> None:
+        """Избира "фиксирана цена" и вписва сумата.
+
+        Без радиото формата остава на "По договаряне" и цената се игнорира.
+        """
+        radio = await first_locator(page, self.sel.get("form_price_fixed_radio"), 2000)
+        if radio is not None:
+            await radio.check()
+            await self.pacer.micro_pause()
+
+        field = await require_locator(page, self.sel["form_price"], "цена")
+        await type_like_human(field, f"{price:.2f}")
+        await self.pacer.micro_pause()
+
+    async def _fill_location(self, page: Page, city: str) -> None:
+        """Градът е <select> с опции от вида "гр. София"."""
+        if not city:
+            return
+        loc = await first_locator(page, self.sel.get("form_location_city"), 3000)
+        if loc is None:
+            log.warning("няма поле за град във формата")
+            return
+
+        for label in (f"гр. {city}", city):
+            try:
+                await loc.select_option(label=label)
+                await self.pacer.micro_pause()
+                return
+            except Exception:
+                continue
+        log.warning("не намирам '%s' в списъка с градове", city)
+
+    async def _upload_images(self, page: Page, images: list[Path]) -> None:
+        file_input = await first_locator(page, self.sel.get("form_images_input"), 4000)
+        if file_input is None:
+            log.warning("няма поле за качване на снимки — обявата ще е без снимки")
+            return
+        paths = [str(p) for p in images[: self.cfg.listing.max_images]]
+        await file_input.set_input_files(paths)
+        # Качването е асинхронно; изпращане преди да е готово реже снимките.
+        await page.wait_for_timeout(3000 + 1500 * len(paths))
+        log.info("качени %d снимки", len(paths))
 
     async def _detect_published(self, page: Page) -> tuple[str, str]:
         pattern = self.sel.get("published_url_pattern", r"bazar\.bg/obiava-(\d+)")
@@ -296,129 +422,13 @@ class BazarSink:
         for sel in self.sel.get("form_error", []):
             try:
                 loc = page.locator(sel).first
-                if await loc.count() > 0:
+                if await loc.count() > 0 and await loc.is_visible():
                     text = (await loc.inner_text()).strip()
                     if text:
-                        return text[:300]
+                        return " ".join(text.split())[:300]
             except Exception:
                 continue
         return ""
-
-    # ------------------------------------------------------------ полета
-
-    async def _select_if_present(self, page: Page, candidates, value: str) -> None:
-        """Избира стойност в <select>, ако такъв изобщо съществува."""
-        if not candidates or not value:
-            return
-        loc = await first_locator(page, candidates, timeout_ms=1500)
-        if loc is None:
-            return
-        for attempt in (
-            lambda: loc.select_option(label=value),
-            lambda: loc.select_option(value=value),
-        ):
-            try:
-                await attempt()
-                return
-            except Exception:
-                continue
-        log.debug("не мога да избера '%s' — оставям стойността по подразбиране", value)
-
-    async def _fill_category(self, page: Page, category_label: str) -> None:
-        """Избира категорията ниво по ниво: 'Мода > Аксесоари > Портфейли'.
-
-        Пътят е нужен, защото етикети като 'Мъжки' се срещат под Часовници,
-        под Дрехи и под Обувки — само последният етикет е двусмислен.
-        """
-        path = label_to_path(category_label)
-        if not path:
-            raise PublishError("няма категория за тази обява (виж listing.category_map)")
-
-        # Ако е обикновен <select>, там обикновено стои само листото.
-        select = await first_locator(page, self.sel.get("form_category_opener"), 1500)
-        if select is not None:
-            tag = await select.evaluate("el => el.tagName.toLowerCase()")
-            if tag == "select":
-                await self._select_if_present(
-                    page, self.sel.get("form_category_opener"), path[-1]
-                )
-                return
-            await select.click()
-            await page.wait_for_timeout(600)
-
-        # Търсачка на категории: пишем листото и избираме от предложенията.
-        search = await first_locator(page, self.sel.get("form_category_search"), 2000)
-        if search is not None:
-            await type_like_human(search, path[-1])
-            await page.wait_for_timeout(1200)
-            if await self._click_option(page, path[-1]):
-                return
-
-        # Дърво: минаваме през нивата в ред.
-        clicked_any = False
-        for level in path:
-            if await self._click_option(page, level):
-                clicked_any = True
-                await page.wait_for_timeout(700)
-        if clicked_any:
-            return
-
-        raise PublishError(
-            f"не мога да избера категория '{category_label}'. "
-            f"Пусни `shopbot calibrate bazar` и оправи form_category_* в selectors.yaml"
-        )
-
-    async def _click_option(self, page: Page, label: str) -> bool:
-        """Кликва видим елемент с точно този текст. Точното съвпадение е важно:
-        'Чанти' иначе би уцелило 'Дамски чанти за рамо' и подобни."""
-        for locator in (
-            page.get_by_text(label, exact=True),
-            page.locator(f"text={label}"),
-        ):
-            try:
-                count = await locator.count()
-            except Exception:
-                continue
-            for i in range(min(count, 5)):
-                candidate = locator.nth(i)
-                try:
-                    if await candidate.is_visible():
-                        await candidate.click(timeout=3000)
-                        return True
-                except Exception:
-                    continue
-        return False
-
-    async def _fill_location(self, page: Page, city: str) -> None:
-        if not city:
-            return
-        loc = await first_locator(page, self.sel.get("form_location"), 2000)
-        if loc is None:
-            log.debug("няма поле за град във формата")
-            return
-        tag = await loc.evaluate("el => el.tagName.toLowerCase()")
-        if tag == "select":
-            await self._select_if_present(page, self.sel.get("form_location"), city)
-            return
-        await type_like_human(loc, city)
-        await page.wait_for_timeout(1000)
-        suggestion = page.locator(f"text={city}").first
-        try:
-            if await suggestion.count() > 0 and await suggestion.is_visible():
-                await suggestion.click()
-        except Exception:
-            pass
-
-    async def _upload_images(self, page: Page, images: list[Path]) -> None:
-        file_input = await first_locator(page, self.sel.get("form_images_input"), 3000)
-        if file_input is None:
-            log.warning("няма поле за качване на снимки — обявата ще е без снимки")
-            return
-        paths = [str(p) for p in images[: self.cfg.listing.max_images]]
-        await file_input.set_input_files(paths)
-        # Качването е асинхронно; изпращане преди да е готово реже снимките.
-        await page.wait_for_timeout(2000 + 1200 * len(paths))
-        log.info("качени %d снимки", len(paths))
 
     # --------------------------------------------------------------- сваляне
 

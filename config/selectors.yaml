@@ -85,6 +85,7 @@ bestsecret:
     - 'text=/Last \d+ item/i'
 
 bazar:
+  # Проверено на живо в логнат профил на /ads/save.
   login_url: https://bazar.bg/user/login
   publish_url: https://bazar.bg/ads/save
   my_ads_url: https://bazar.bg/ads/my
@@ -97,12 +98,12 @@ bazar:
   login_email: "#login-form input[name='email']"
   login_password: "#login-form input[name='password']"
   login_submit: "#login-form input[type='submit']"
-  # ВНИМАНИЕ: input[name='contact_website'] е honeypot на Bazar.bg.
-  # Трябва да остане ПРАЗЕН — попълването му маркира заявката като бот.
+  # ВНИМАНИЕ: contact_website е honeypot и на двете форми — родителят му е
+  # position:absolute; left:-9999px. Трябва да остане ПРАЗЕН.
   honeypot_field: "input[name='contact_website']"
   logged_in_markers:
     - "a[href*='/user/logout']"
-    - "a[href='/ads/my']"
+    - "#submitBtn"
 
   # Bazar.bg ползва CookieScript. Бутоните са DIV-ове, не <button>, затова
   # текстови селектори по button никога не съвпадат. Банерът се инжектира
@@ -114,40 +115,42 @@ bazar:
   cookie_dismiss:
     - "#cookiescript_close"
 
-  # Формата за нова обява
+  # ---------------- формата за нова обява ----------------
+  form: "#saveAdForm"
   form_title:
-    - "input[name='title']"
     - "#title"
-  form_description:
-    - "textarea[name='description']"
-    - "#description"
+  # Описанието е Redactor: видимото поле е contenteditable body в iframe,
+  # а textarea#descr стои скрит и се пълни от редактора при изпращане.
+  form_description_frame: "#redactorIframe"
+  form_description_body: "body"
+  form_description_textarea: "#descr"
+  # Категорията се задава като число в скритото поле; видимият <select>
+  # се пълни от JS и остава празен, докато не се мине през джаджата.
+  form_category_id: "#category_id"
+  form_category_select: "#rubChooser"
+  # Радиото за "фиксирана цена" (другите две са "По договаряне" и "Подарявам").
+  form_price_fixed_radio: "#rprice2"
   form_price:
-    - "input[name='price']"
-    - "#price"
-  form_currency:
-    - "select[name='currency']"
-  form_category_opener:
-    - "[data-role='category-select']"
-    - "#category-select"
-    - "select[name='category_id']"
-  form_category_search:
-    - "input[name='category_search']"
-    - "input[placeholder*='категор']"
-  form_location:
-    - "input[name='location']"
-    - "select[name='city_id']"
-    - "input[placeholder*='Град']"
-  form_condition:
-    - "select[name='condition']"
+    - "#saveAdForm input[name='price']"
+  form_location_city:
+    - "#province_city_location"
+  form_location_district:
+    - "#populated_location"
+  form_phone:
+    - "#tel"
   form_images_input:
-    - "input[type='file']"
+    - "#saveAdForm input[type='file']"
   form_submit:
-    - "button[type='submit']"
-    - "input[type='submit']"
+    - "#submitBtn"
   form_error:
-    - ".error"
+    - ".alert-error:visible"
+    - "#error_title"
     - ".alert-danger"
-    - "[class*='error']"
+
+  # Изисквания на сайта, проверени от съобщенията във формата.
+  min_title_len: 15
+  min_description_len: 40
+  min_image_edge: 250
 
   # Резултат след публикуване
   published_url_pattern: 'bazar\.bg/obiava-(\d+)'

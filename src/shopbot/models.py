@@ -90,7 +90,7 @@ class Listing:
     description: str = ""
     price: float = 0.0
     currency: str = "EUR"
-    category_label: str = ""
+    category_id: int = 0
     image_paths: list[str] = field(default_factory=list)
     bazar_id: str | None = None
     bazar_url: str | None = None

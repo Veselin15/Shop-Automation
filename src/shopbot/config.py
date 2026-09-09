@@ -126,9 +126,12 @@ class PricingConfig(BaseModel):
 
 class ListingConfig(BaseModel):
     location: str = "София"
-    # Ключ от source.categories -> път в дървото на Bazar.bg, ниво по ниво.
-    # Пътят е нужен, защото етикети като "Мъжки" се срещат в няколко клона.
-    category_map: dict[str, list[str]] = Field(default_factory=dict)
+    # Ключ от source.categories -> числово id на рубриката в Bazar.bg.
+    # Числото е това, което формата праща; имената се сменят, id-тата не.
+    category_map: dict[str, int] = Field(default_factory=dict)
+    # Българска дума пред заглавието, за да се намира обявата при търсене.
+    title_prefix: dict[str, str] = Field(default_factory=dict)
+    phone: str = ""
     condition: str = "Ново"
     max_images: int = 6
     title_template: str = "{brand} {name} - {size_hint}"

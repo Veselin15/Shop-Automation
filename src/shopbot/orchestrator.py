@@ -210,12 +210,12 @@ class Orchestrator:
             self.db.log_event("price_reject", price.rejected, product.id)
             return True
 
-        category_path = self.cfg.listing.category_map.get(category_key, [])
-        if not category_path:
-            log.warning("няма Bazar.bg категория за '%s' — пропускам", category_key)
+        category_id = self.cfg.listing.category_map.get(category_key, 0)
+        if not category_id:
+            log.warning("няма Bazar.bg рубрика за '%s' — пропускам", category_key)
             return True
 
-        listing = build_listing(product, price, self.cfg.listing, category_path)
+        listing = build_listing(product, price, self.cfg.listing, category_id)
 
         # Снимките се свалят сега, докато сесията към източника е жива.
         images = await download_images(
@@ -384,7 +384,7 @@ class Orchestrator:
                 continue
 
             listing = build_listing(
-                product, price, self.cfg.listing, row["category_label"]
+                product, price, self.cfg.listing, row["category_id"]
             )
             images = sorted((self.cfg.images_dir / product.id).glob("*.jpg"))
             if not images:
