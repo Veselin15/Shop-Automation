@@ -52,6 +52,8 @@ MAX_SCROLLS = 25
 MIN_SCROLLS = 6
 STABLE_READINGS = 3
 SCROLL_SETTLE_MS = 1200
+# Под толкова плочки листингът почти сигурно не е дозаредил докрай.
+SUSPICIOUSLY_FEW = 20
 
 BESTSELLER_WORDS = ("bestseller", "best seller", "top", "beliebt", "popular", "хит")
 LOW_STOCK_WORDS = ("only", "last", "few", "nur noch")
@@ -133,23 +135,45 @@ class BestSecretSource:
         return hits
 
     async def _scroll_through(self, page: Page) -> int:
-        """Листингът дозарежда при скрол; без това виждаме само първите плочки.
+        """Дозарежда листинга, като бута последната плочка във видимото поле.
 
-        Спира се чак след няколко поредни еднакви преброявания. Едно
-        съвпадение не значи нищо — дозареждането има забавяне и рано
-        излизане тук струва 100 продукта на страница.
+        `mouse.wheel` не върши работа: ако към момента са рендирани само
+        няколко плочки, страницата не е по-висока от прозореца, колелцето
+        няма какво да превърти и се получава задънена улица — съдържание се
+        зарежда при скрол, а скрол няма откъде да стане. На по-бавна машина
+        това спираше на 8 продукта вместо 300.
+
+        Бутането на последния елемент задейства наблюдателя директно и
+        работи независимо от височината на документа.
         """
         selector = self.sel["product_card"][0]
+        tiles = page.locator(selector)
+
         previous = -1
         stable = 0
         for step in range(MAX_SCROLLS):
-            await page.mouse.wheel(0, 2400)
+            count = await tiles.count()
+            if count:
+                try:
+                    await tiles.nth(count - 1).scroll_into_view_if_needed(timeout=5000)
+                except Exception:
+                    await page.mouse.wheel(0, 2400)
+            else:
+                await page.mouse.wheel(0, 2400)
+
             await page.wait_for_timeout(SCROLL_SETTLE_MS)
-            current = await page.locator(selector).count()
+            current = await tiles.count()
             stable = stable + 1 if current == previous else 0
             previous = current
             if step + 1 >= MIN_SCROLLS and stable >= STABLE_READINGS:
                 break
+
+        if previous <= SUSPICIOUSLY_FEW:
+            log.warning(
+                "само %d плочки след %d скрола на %s — листингът вероятно не "
+                "дозарежда; провери product_card в selectors.yaml",
+                previous, step + 1, page.url,
+            )
         return previous
 
     async def _collect_cards(self, page: Page, start_rank: int) -> list[CardHit]:
