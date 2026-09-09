@@ -131,8 +131,15 @@ class Orchestrator:
             report.errors.append(msg)
             return
 
-        for category in configured:
+        for index, category in enumerate(configured):
             if fetch_budget <= 0 or tile_budget <= 0:
+                # Мълчаливото спиране тук значи, че цели категории никога не
+                # се обхождат — затова се вижда в лога.
+                log.warning(
+                    "бюджетът свърши на %d-та от %d категории (плочки %d, "
+                    "отваряния %d); необходените остават за следващия цикъл",
+                    index + 1, len(configured), tile_budget, fetch_budget,
+                )
                 break
             try:
                 hits = await source.discover(category, page)
