@@ -45,7 +45,13 @@ IMAGE_SIZE_TOKEN = re.compile(r"_(\d+)[xX](\d+)_")
 # Кой кадър от галерията е това (…_970X1182_2.jpg -> 2), за да не смятаме
 # два размера на една и съща снимка за две снимки.
 IMAGE_INDEX = re.compile(r"_(\d+)\.(?:jpg|jpeg|png|webp)$", re.IGNORECASE)
-MAX_SCROLLS = 12
+# Дозареждането при скрол зависи от скоростта на машината и мрежата. На
+# по-бавен сървър три проверки по 900 ms хващаха 12 продукта вместо 200,
+# затова има минимален брой скролове и повече поредни стабилни четения.
+MAX_SCROLLS = 25
+MIN_SCROLLS = 6
+STABLE_READINGS = 3
+SCROLL_SETTLE_MS = 1200
 
 BESTSELLER_WORDS = ("bestseller", "best seller", "top", "beliebt", "popular", "хит")
 LOW_STOCK_WORDS = ("only", "last", "few", "nur noch")
@@ -109,9 +115,13 @@ class BestSecretSource:
             await page.goto(url, wait_until="domcontentloaded")
             await page.wait_for_timeout(2000)
             await self._guard(page)
-            await self._scroll_through(page)
+            loaded = await self._scroll_through(page)
 
             cards = await self._collect_cards(page, start_rank=rank)
+            log.info(
+                "BestSecret: страница %d -> %d плочки, %d уникални",
+                page_no, loaded, len(cards),
+            )
             if not cards:
                 log.info("BestSecret: няма продукти на страница %d, спирам", page_no)
                 break
@@ -122,7 +132,7 @@ class BestSecretSource:
         log.info("BestSecret: %d продукта в %s", len(hits), category.key)
         return hits
 
-    async def _scroll_through(self, page: Page) -> None:
+    async def _scroll_through(self, page: Page) -> int:
         """Листингът дозарежда при скрол; без това виждаме само първите плочки.
 
         Спира се чак след няколко поредни еднакви преброявания. Едно
@@ -132,14 +142,15 @@ class BestSecretSource:
         selector = self.sel["product_card"][0]
         previous = -1
         stable = 0
-        for _ in range(MAX_SCROLLS):
+        for step in range(MAX_SCROLLS):
             await page.mouse.wheel(0, 2400)
-            await page.wait_for_timeout(900)
+            await page.wait_for_timeout(SCROLL_SETTLE_MS)
             current = await page.locator(selector).count()
             stable = stable + 1 if current == previous else 0
             previous = current
-            if stable >= 2:
+            if step + 1 >= MIN_SCROLLS and stable >= STABLE_READINGS:
                 break
+        return previous
 
     async def _collect_cards(self, page: Page, start_rank: int) -> list[CardHit]:
         raw = await page.evaluate(

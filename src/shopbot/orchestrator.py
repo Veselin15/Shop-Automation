@@ -383,9 +383,19 @@ class Orchestrator:
                 self.db.mark_failed(row["product_id"], f"цена: {price.rejected}")
                 continue
 
-            listing = build_listing(
-                product, price, self.cfg.listing, row["category_id"]
-            )
+            # Рубриката се извежда от конфига ВСЕКИ ПЪТ, а не се чете от
+            # реда в базата: иначе промяна в category_map никога не стига до
+            # вече записаните кандидати, а стари редове носят 0 и се провалят
+            # безкрайно.
+            category_id = self.cfg.listing.category_map.get(product.category_key, 0)
+            if not category_id:
+                self.db.mark_failed(
+                    row["product_id"],
+                    f"няма рубрика за категория '{product.category_key}'",
+                )
+                continue
+
+            listing = build_listing(product, price, self.cfg.listing, category_id)
             images = sorted((self.cfg.images_dir / product.id).glob("*.jpg"))
             if not images:
                 self.db.mark_failed(row["product_id"], "снимките липсват на диска")
