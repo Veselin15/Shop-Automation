@@ -180,3 +180,24 @@ def test_new_rules_invalidate_old_verdicts(tmp_path):
     assert db.get_appraisal("x1", "старa-версия") is not None
     assert db.get_appraisal("x1", prompt_version()) is None
     db.close()
+
+
+def test_the_best_judged_item_publishes_first(tmp_path):
+    """Редът решава кое излиза при 7 обяви на цикъл — води оценката."""
+    from shopbot.models import Listing
+
+    db = Database(tmp_path / "order.db")
+    for pid, brand, score, appraisal in [
+        ("a", "Jimmy Choo", 0.90, 0.45),
+        ("b", "Michael Kors", 0.60, 0.85),
+        ("c", "Guess", 0.70, None),
+    ]:
+        db.upsert_product(make_product(pid=pid, brand=brand), score=score)
+        db.save_candidate(Listing(product_id=pid, title=brand))
+        if appraisal is not None:
+            db.save_appraisal(pid, appraisal, "", "test", prompt_version())
+
+    order = [r["product_id"] for r in db.pending_candidates(5)]
+    db.close()
+    assert order[0] == "b", "по-високо оценената трябва да излезе първа"
+    assert order[-1] == "c", "неоценената чака отзад"

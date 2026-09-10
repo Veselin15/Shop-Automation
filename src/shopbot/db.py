@@ -244,13 +244,22 @@ class Database:
             )
 
     def pending_candidates(self, limit: int) -> list[sqlite3.Row]:
+        """Първо излиза това, което моделът е оценил най-високо.
+
+        Скорът за популярност мери марка и намаление и качва всяка позната
+        марка нагоре; оценката гледа самия артикул. При няколко публикувани
+        на цикъл редът решава кое изобщо ще излезе, затова води оценката, а
+        старият скор остава само за да пререди равните.
+        """
         return list(
             self.conn.execute(
                 """
-                SELECT l.*, p.score AS score FROM listings l
+                SELECT l.*, p.score AS score, COALESCE(a.score, -1) AS appraisal
+                FROM listings l
                 JOIN products p ON p.id = l.product_id
+                LEFT JOIN appraisals a ON a.product_id = l.product_id
                 WHERE l.state IN ('candidate','failed') AND l.attempts < 3
-                ORDER BY p.score DESC, p.first_seen ASC LIMIT ?
+                ORDER BY appraisal DESC, p.score DESC, p.first_seen ASC LIMIT ?
                 """,
                 (limit,),
             )
