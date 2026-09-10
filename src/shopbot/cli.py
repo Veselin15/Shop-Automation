@@ -740,12 +740,14 @@ def models_cmd(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
 def remove(
     bazar_id: str = typer.Argument(..., help="номер на обявата в Bazar.bg"),
     reason: str = typer.Option("ръчно сваляне", "--reason", help="какво да се запише в базата"),
+    hard: bool = typer.Option(False, "--hard", help="изтрий завинаги вместо да деактивираш"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Сваля една обява и отбелязва това в базата.
 
-    Същият път, по който минава и автоматичното сваляне — затова служи и за
-    проверка, че изтриването наистина работи, без да се чака промяна в цената.
+    По подразбиране я деактивира — скрита е, но остава и се вдига обратно.
+    С `--hard` се трие завинаги. Същият път, по който минава и автоматичното
+    сваляне, затова служи и за проверка, че всичко работи.
     """
     setup_logging(verbose)
     cfg, db, notifier = _ctx()
@@ -761,7 +763,9 @@ def remove(
             page = await session.new_page()
             await sink.ensure_logged_in(page)
 
-            if not await sink.delete_ad(bazar_id, page):
+            done = (await sink.delete_ad(bazar_id, page) if hard
+                    else await sink.deactivate_ad(bazar_id, page))
+            if not done:
                 console.print(f"[red]Обява {bazar_id} още е активна.[/red]")
                 raise typer.Exit(1)
 
@@ -771,7 +775,8 @@ def remove(
             if row is not None:
                 db.mark_removed(row["product_id"], reason)
                 db.log_event("removed", reason, row["product_id"])
-                console.print(f"[green]Свалена:[/green] {row['title']}")
+                what = "Изтрита" if hard else "Деактивирана"
+                console.print(f"[green]{what}:[/green] {row['title']}")
             else:
                 console.print("[yellow]Свалена, но я няма в базата.[/yellow]")
         finally:

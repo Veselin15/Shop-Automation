@@ -217,3 +217,10 @@ def test_pending_removals_carry_the_ad_url(orch):
     pending = o._pending_removals()
     assert len(pending) == 1
     assert pending[0][4].startswith("https://bazar.bg/obiava-")
+
+
+def test_removal_defaults_to_the_reversible_option():
+    """Изтриването е необратимо; продуктът може пак да поевтинее след седмица."""
+    from shopbot.config import Config
+
+    assert Config().removal.mode == "deactivate"

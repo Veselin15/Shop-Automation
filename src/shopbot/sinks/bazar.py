@@ -601,6 +601,62 @@ class BazarSink:
 
     # --------------------------------------------------------------- сваляне
 
+    async def deactivate_ad(self, bazar_id: str, page: Page, max_pages: int = 20) -> bool:
+        """Деактивира обявата: скрива я, без да я трие.
+
+        По-добрият избор за нашия случай. Продуктът може пак да поевтинее
+        след седмица, а деактивираната обява се вдига обратно с един клик и
+        пази номера, снимките и позицията си; изтритата се прави отначало.
+        Адресът ѝ също остава — линкът в известието продължава да работи.
+        """
+        base = self.sel["my_ads_url"]
+        for page_no in range(1, max_pages + 1):
+            url = base if page_no == 1 else f"{base}?page={page_no}"
+            await page.goto(url, wait_until="domcontentloaded")
+            await self._handle_cookies(page)
+            if not await self.is_logged_in(page):
+                raise AuthWallError(SITE, "сесията падна при деактивиране")
+            await page.wait_for_timeout(1500)
+
+            link = page.locator(f'a.archiveLink[data-id="{bazar_id}"]')
+            if not await link.count():
+                if not await self._ads_on_page(page):
+                    break
+                continue
+
+            await link.first.click()
+            await page.wait_for_timeout(1500)
+
+            # Bazar.bg пита „Имаше ли успех?“ и предлага да отчетем продажба.
+            # Ботът не знае дали е продадено, затова минава по „Пропусни“ —
+            # невярна статистика не струва нищо, а подвежда продавача.
+            skip = page.locator(
+                '.ui-dialog button:has-text("деактивирай"), '
+                '.ui-dialog a:has-text("деактивирай")'
+            )
+            if await skip.count():
+                await skip.first.click()
+                await page.wait_for_timeout(2500)
+
+            if await self._is_inactive(bazar_id, page):
+                log.info("Bazar.bg: обява %s е деактивирана", bazar_id)
+                return True
+            log.warning("Bazar.bg: обява %s още е активна след деактивиране", bazar_id)
+            return False
+
+        log.warning("Bazar.bg: обява %s я няма в моите обяви", bazar_id)
+        return False
+
+    async def _is_inactive(self, bazar_id: str, page: Page) -> bool:
+        """Проверява в списъка „Неактивни", не по публичния адрес.
+
+        Деактивираната обява си остава на същия адрес — затова проверката,
+        която върши работа при изтриване, тук не казва нищо.
+        """
+        await page.goto(f"{self.sel['my_ads_url']}?state=4", wait_until="domcontentloaded")
+        await page.wait_for_timeout(1500)
+        return bazar_id in await self._ads_on_page(page)
+
     async def delete_ad(self, bazar_id: str, page: Page) -> bool:
         url = self.sel["delete_url_template"].format(id=bazar_id)
         await page.goto(url, wait_until="domcontentloaded")

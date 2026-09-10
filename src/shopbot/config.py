@@ -205,6 +205,9 @@ class BazarConfig(BaseModel):
 
 class RemovalConfig(BaseModel):
     auto_remove: bool = True
+    # Как пада обявата: "deactivate" я скрива и я пази за по-късно,
+    # "delete" я трие завинаги.
+    mode: Literal["deactivate", "delete"] = "deactivate"
     # Твърд под: под това намаление обявата пада, каквото и да е било в
     # деня на публикуване.
     remove_below_discount_pct: int = 45

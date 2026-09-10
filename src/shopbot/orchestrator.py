@@ -428,7 +428,10 @@ class Orchestrator:
                 continue
 
             try:
-                ok = await sink.delete_ad(bazar_id, page)
+                if self.cfg.removal.mode == "deactivate":
+                    ok = await sink.deactivate_ad(bazar_id, page)
+                else:
+                    ok = await sink.delete_ad(bazar_id, page)
             except AuthWallError:
                 raise
             except Exception as exc:
