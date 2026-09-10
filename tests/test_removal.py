@@ -224,3 +224,35 @@ def test_removal_defaults_to_the_reversible_option():
     from shopbot.config import Config
 
     assert Config().removal.mode == "deactivate"
+
+
+def test_a_second_browser_refuses_the_same_profile(tmp_path):
+    """Два браузъра върху един профил събарят сесията — вторият трябва да откаже."""
+    import os
+
+    from shopbot.browser import BrowserSession, ProfileBusy
+
+    profile = tmp_path / "bazar"
+    profile.mkdir()
+    (profile / ".shopbot.lock").write_text(str(os.getppid()), encoding="utf-8")
+
+    other = BrowserSession("bazar", profile, headless=True)
+    try:
+        other._claim_profile()
+    except ProfileBusy as exc:
+        assert "bazar" in str(exc)
+    else:
+        raise AssertionError("вторият процес не биваше да получи профила")
+
+
+def test_a_stale_lock_does_not_block_forever(tmp_path):
+    """Убит процес не бива да заключи профила завинаги."""
+    from shopbot.browser import BrowserSession
+
+    profile = tmp_path / "bestsecret"
+    profile.mkdir()
+    (profile / ".shopbot.lock").write_text("999999", encoding="utf-8")  # мъртъв PID
+
+    s = BrowserSession("bestsecret", profile, headless=True)
+    s._claim_profile()          # не хвърля
+    assert (profile / ".shopbot.lock").read_text().strip() == str(__import__("os").getpid())

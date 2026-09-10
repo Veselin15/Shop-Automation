@@ -15,6 +15,7 @@ from .appraise import AppraisalUnavailable, appraise, list_gemini_models
 from .browser import (
     BrowserMissing,
     BrowserSession,
+    ProfileBusy,
     any_present,
     require_locator,
     type_like_human,
@@ -56,6 +57,9 @@ def _run_async(coro):
         return asyncio.run(coro)
     except BrowserMissing as exc:
         console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+    except ProfileBusy as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
         raise typer.Exit(1) from None
 
 

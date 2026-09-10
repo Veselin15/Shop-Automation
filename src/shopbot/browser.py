@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -30,6 +31,15 @@ log = logging.getLogger(__name__)
 # такъв, какъвто е.
 
 VIEWPORTS = [(1440, 900), (1536, 864), (1366, 768)]
+
+
+class ProfileBusy(RuntimeError):
+    """Профилът вече се ползва от друг процес.
+
+    Два браузъра върху един и същ профил на Chromium си разбиват сесията:
+    единият вижда login wall, а бисквитките, които вторият запише, изместват
+    тези на първия. По-добре втората команда да откаже да тръгне.
+    """
 
 
 class AuthWallError(RuntimeError):
@@ -70,6 +80,7 @@ class BrowserSession:
 
     async def start(self) -> BrowserContext:
         self.profile_dir.mkdir(parents=True, exist_ok=True)
+        self._claim_profile()
         self._pw = await async_playwright().start()
         width, height = random.choice(VIEWPORTS)
         try:
@@ -117,7 +128,41 @@ class BrowserSession:
             log.info("вляти %d бисквитки от %s", len(cookies), source.name)
         return len(cookies)
 
+    def _claim_profile(self) -> None:
+        """Заключва профила за този процес или отказва да тръгне."""
+        holder = self._lock_holder()
+        if holder is not None:
+            raise ProfileBusy(
+                f"профилът на {self.name} се ползва от процес {holder}. "
+                f"Спри го (`sudo systemctl stop shopbot`) или изчакай цикъла — "
+                f"два браузъра върху един профил събарят сесията."
+            )
+        self._lock_path.write_text(str(os.getpid()), encoding="utf-8")
+
+    def _lock_holder(self) -> int | None:
+        """PID-ът, който държи профила, ако още е жив."""
+        try:
+            pid = int(self._lock_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        if pid == os.getpid():
+            return None
+        try:
+            os.kill(pid, 0)          # само проверка, не праща сигнал
+        except (OSError, ProcessLookupError):
+            return None              # процесът е мъртъв, ключалката е стара
+        return pid
+
+    @property
+    def _lock_path(self) -> Path:
+        return self.profile_dir / ".shopbot.lock"
+
+    def _release_profile(self) -> None:
+        if self._lock_holder() is None:
+            self._lock_path.unlink(missing_ok=True)
+
     async def stop(self) -> None:
+        self._release_profile()
         if self.context:
             await self.context.close()
             self.context = None
