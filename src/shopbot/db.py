@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS appraisals (
     score       REAL DEFAULT 0,
     reason      TEXT DEFAULT '',
     model       TEXT DEFAULT '',
+    prompt      TEXT DEFAULT '',
     created_at  TEXT
 );
 
@@ -97,6 +98,10 @@ class Database:
 
     def _migrate(self) -> None:
         """Дребни промени по схемата на вече съществуваща база."""
+        appraisal_cols = {r[1] for r in self.conn.execute("PRAGMA table_info(appraisals)")}
+        if appraisal_cols and "prompt" not in appraisal_cols:
+            self.conn.execute("ALTER TABLE appraisals ADD COLUMN prompt TEXT DEFAULT ''")
+
         columns = {r[1] for r in self.conn.execute("PRAGMA table_info(listings)")}
         # Категорията беше текстов път ("Мода > Аксесоари"), сега е числово id.
         if "category_label" in columns and "category_id" not in columns:
@@ -266,21 +271,27 @@ class Database:
 
     # ---------------- appraisals ----------------
 
-    def get_appraisal(self, product_id: str) -> sqlite3.Row | None:
-        """Оценката се плаща веднъж. Един и същ артикул се среща всеки цикъл."""
+    def get_appraisal(self, product_id: str, prompt: str = "") -> sqlite3.Row | None:
+        """Оценката се плаща веднъж — но само докато правилата са същите.
+
+        Смениш ли текста, по който моделът съди, старите оценки вече отговарят
+        на друг въпрос и мълчаливото им използване прикрива промяната.
+        """
         cur = self.conn.execute(
-            "SELECT * FROM appraisals WHERE product_id = ?", (product_id,)
+            "SELECT * FROM appraisals WHERE product_id = ? AND prompt = ?",
+            (product_id, prompt),
         )
         return cur.fetchone()
 
-    def save_appraisal(self, product_id: str, score: float, reason: str, model: str) -> None:
+    def save_appraisal(self, product_id: str, score: float, reason: str,
+                       model: str, prompt: str = "") -> None:
         with self.tx() as c:
             c.execute(
-                "INSERT INTO appraisals (product_id, score, reason, model, created_at) "
-                "VALUES (?,?,?,?,?) ON CONFLICT(product_id) DO UPDATE SET "
+                "INSERT INTO appraisals (product_id, score, reason, model, prompt, created_at) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(product_id) DO UPDATE SET "
                 "score=excluded.score, reason=excluded.reason, model=excluded.model, "
-                "created_at=excluded.created_at",
-                (product_id, score, reason[:300], model, utcnow()),
+                "prompt=excluded.prompt, created_at=excluded.created_at",
+                (product_id, score, reason[:300], model, prompt, utcnow()),
             )
 
     # ---------------- events & counters ----------------

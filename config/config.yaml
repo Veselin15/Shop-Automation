@@ -246,8 +246,8 @@ appraisal:
   min_score_by_category:
     watches_men: 0.45
     watches_women: 0.45
-    sunglasses_men: 0.62
-    sunglasses_women: 0.62
+    sunglasses_men: 0.70
+    sunglasses_women: 0.70
     bags_women: 0.55
     bags_men: 0.55
   # Таван на заявките за цикъл — пази безплатния дневен лимит. Оценката се

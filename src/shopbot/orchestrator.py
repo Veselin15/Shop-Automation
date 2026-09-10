@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from .appraise import AppraisalUnavailable, appraise
+from .appraise import AppraisalUnavailable, appraise, prompt_version
 from .browser import AuthWallError, BrowserSession, SelectorMissing
 from .config import Config
 from .db import Database
@@ -277,7 +277,7 @@ class Orchestrator:
 
         threshold = cfg.min_score_by_category.get(product.category_key, cfg.min_score)
 
-        cached = self.db.get_appraisal(product.id)
+        cached = self.db.get_appraisal(product.id, prompt_version())
         if cached is not None:
             verdict_score, reason = cached["score"], cached["reason"]
         else:
@@ -298,7 +298,8 @@ class Orchestrator:
             self._appraisal_budget -= 1
             report.appraised += 1
             verdict_score, reason = verdict.score, verdict.reason
-            self.db.save_appraisal(product.id, verdict.score, verdict.reason, verdict.model)
+            self.db.save_appraisal(product.id, verdict.score, verdict.reason,
+                                   verdict.model, prompt_version())
 
         if verdict_score < threshold:
             report.appraisal_rejects += 1

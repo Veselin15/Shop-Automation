@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from shopbot.appraise import AppraisalUnavailable, _parse, appraise
+from shopbot.appraise import AppraisalUnavailable, _parse, appraise, prompt_version
 from shopbot.config import AppraisalConfig, Config, load_config
 from shopbot.db import Database
 from shopbot.models import Product
@@ -42,7 +42,7 @@ def run(orch, product, score, reason="ок", monkeypatch=None):
     o, db, cfg = orch
     price = compute_price(product, cfg.pricing)
     report = CycleReport()
-    db.save_appraisal(product.id, score, reason, "test")
+    db.save_appraisal(product.id, score, reason, "test", prompt_version())
     return asyncio.run(o._appraisal_passes(product, price, [], report)), report
 
 
@@ -171,3 +171,12 @@ def test_blocked_answer_is_an_error_not_a_zero(tmp_path, monkeypatch):
     capture(monkeypatch, {"candidates": []})
     with pytest.raises(AppraisalUnavailable):
         call(cfg, tmp_path, key="free-key")
+
+
+def test_new_rules_invalidate_old_verdicts(tmp_path):
+    """Смениш ли правилата, старата оценка отговаря на друг въпрос."""
+    db = Database(tmp_path / "t.db")
+    db.save_appraisal("x1", 0.9, "по старите правила", "test", "старa-версия")
+    assert db.get_appraisal("x1", "старa-версия") is not None
+    assert db.get_appraisal("x1", prompt_version()) is None
+    db.close()
