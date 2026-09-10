@@ -344,7 +344,29 @@ class BestSecretSource:
         )
 
         if not data or not data["name"]:
-            log.warning("BestSecret: не мога да прочета %s — провери pdp_* селекторите", url)
+            # Страницата може да е празна по две много различни причини:
+            # продуктът е свален, или селекторите са остарели. Съобщение,
+            # което ги смесва, праща човека да търси счупено там, където е
+            # наред — затова се пита самата страница.
+            state = await page.evaluate(
+                """() => {
+                  const body = (document.body.innerText || '').toLowerCase();
+                  const gone = /no longer available|not available|sold out|nicht mehr verf/
+                                 .test(body);
+                  return {gone, title: document.title.slice(0, 80),
+                          url: location.href, length: body.length};
+                }"""
+            )
+            if state["gone"] or "entrance" in state["url"]:
+                log.info("BestSecret: %s вече не се предлага", url)
+            else:
+                shot = self.cfg.data_dir / f"pdp_unreadable_{_product_key(url)}.png"
+                await page.screenshot(path=str(shot))
+                log.warning(
+                    "BestSecret: %s не се чете (заглавие: %s, текст %d знака). "
+                    "Ако се повтаря, провери pdp_* в selectors.yaml. Снимка: %s",
+                    url, state["title"], state["length"], shot,
+                )
             return None
 
         price, currency = parse_money(data["price"])
