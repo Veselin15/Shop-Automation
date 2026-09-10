@@ -45,6 +45,8 @@ KEYS = {
     "pattern": "Десен",
     "closure": "Закопчаване",
     "compartments": "Отделения",
+    "pockets": "Джобове",
+    "extras": "Детайли",
     "measurements": "Размери",
     "measurements for one size": "Размери",
     "details": "Детайли",
@@ -153,6 +155,9 @@ def parse_specs(raw: str, limit: int = 8) -> list[tuple[str, str]]:
         # "Sunglasses by Carrera". Нито едното не е част от стойността.
         value = SECTIONS.sub("", value)
         value = re.split(r"(?<=[a-zа-я])\s+(?=[A-ZА-Я][a-zа-я]+\s+by)", value)[0]
+        # Непознато поле също стои залепено за предната стойност ("цип
+        # Extras: logo appliqué"). Не го превеждаме, но и не го влачим.
+        value = re.split(r"\s+(?=[A-Z][A-Za-z'&\- ]{2,28}:)", value)[0]
         value = value.strip(" .,;")
         if not value or len(value) > 160:
             continue
