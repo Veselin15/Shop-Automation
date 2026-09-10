@@ -104,7 +104,9 @@ def build_description(
     product: Product, price: PriceBreakdown, cfg: ListingConfig
 ) -> str:
     color_line = f"Цвят: {product.color}\n" if product.color else ""
-    sizes = product.available_sizes
+    # "Налични размери: One Size" при аксесоар е празен ред, който само
+    # разсейва — размерът има смисъл само когато има от какво да се избира.
+    sizes = [s for s in product.available_sizes if s.strip().casefold() != "one size"]
     size_line = f"Налични размери: {', '.join(sizes)}\n" if sizes else ""
     material_line = f"Материя: {product.material}\n" if product.material else ""
 
