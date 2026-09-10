@@ -117,7 +117,7 @@ class BestSecretSource:
             await page.goto(url, wait_until="domcontentloaded")
             await page.wait_for_timeout(2000)
             await self._guard(page)
-            loaded = await self._scroll_through(page)
+            loaded = await self._scroll_through(page, first_page=page_no == 1)
 
             cards = await self._collect_cards(page, start_rank=rank)
             log.info(
@@ -134,7 +134,7 @@ class BestSecretSource:
         log.info("BestSecret: %d продукта в %s", len(hits), category.key)
         return hits
 
-    async def _scroll_through(self, page: Page) -> int:
+    async def _scroll_through(self, page: Page, first_page: bool = True) -> int:
         """Дозарежда листинга, като бута последната плочка във видимото поле.
 
         `mouse.wheel` не върши работа: ако към момента са рендирани само
@@ -168,7 +168,15 @@ class BestSecretSource:
             if step + 1 >= MIN_SCROLLS and stable >= STABLE_READINGS:
                 break
 
-        if previous <= SUSPICIOUSLY_FEW:
+        if previous > SUSPICIOUSLY_FEW:
+            return previous
+
+        if not first_page:
+            # Празната страница СЛЕД последната е нормалният край на
+            # страницирането. Предупреждение тук се пали по веднъж на
+            # категория и учи човека да не гледа предупрежденията.
+            log.debug("BestSecret: %s е празна — краят на страницирането", page.url)
+        else:
             log.warning(
                 "само %d плочки след %d скрола на %s — листингът вероятно не "
                 "дозарежда; провери product_card в selectors.yaml",
