@@ -138,10 +138,14 @@ class Orchestrator:
             report.errors.append(msg)
             return
 
-        # Отварянията се делят поравно между категориите. Без това първата
+        # Отварянията се делят между категориите по тегло. Без делене първата
         # категория (дамските очила са 700+ след филтъра) изяжда целия бюджет
         # и часовниците, чантите и шапките не се стигат нито един цикъл.
-        per_category_fetch = max(1, fetch_budget // len(configured))
+        total_weight = sum(max(c.weight, 0.0) for c in configured) or float(len(configured))
+        quota = {
+            c.key: max(1, int(fetch_budget * max(c.weight, 0.0) / total_weight))
+            for c in configured
+        }
 
         for index, category in enumerate(configured):
             if fetch_budget <= 0 or tile_budget <= 0:
@@ -159,7 +163,7 @@ class Orchestrator:
                 report.errors.append(f"{category.key}: {exc}")
                 continue
 
-            category_fetch = per_category_fetch
+            category_fetch = quota[category.key]
             for hit in hits:
                 if fetch_budget <= 0 or tile_budget <= 0 or category_fetch <= 0:
                     break

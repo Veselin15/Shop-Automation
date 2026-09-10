@@ -64,6 +64,9 @@ class SourceCategory(BaseModel):
     url: str = ""
     # Резервен вариант: само пътят, без филтри.
     path: str = ""
+    # Дял от бюджета за отваряния. 1.0 е равен дял; 3.0 значи три пъти
+    # повече внимание към тази категория, 0.5 — наполовина.
+    weight: float = 1.0
 
     def resolve(self, base_url: str) -> str:
         if self.url:
