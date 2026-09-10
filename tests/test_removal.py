@@ -153,3 +153,23 @@ def test_the_tolerance_is_configurable(orch):
     assert o._pending_removals() == []
     cfg.removal.max_discount_drop_pct = 5
     assert len(o._pending_removals()) == 1
+
+
+# --------------------------------------------- известието
+
+
+def test_the_notification_carries_both_links():
+    """Поръчката се прави ръчно в BestSecret — адресът трябва да е в известието."""
+    import asyncio
+
+    sent: list[str] = []
+    n = Notifier()
+    n.send = lambda text: sent.append(text) or asyncio.sleep(0)
+
+    asyncio.run(n.published(
+        "Мъжки часовник Guess", "76.90 €", "https://bazar.bg/obiava-1",
+        source_url="https://www.bestsecret.com/product.htm?code=1", cost="49.99 €",
+    ))
+    assert "bazar.bg/obiava-1" in sent[0]
+    assert "bestsecret.com/product.htm?code=1" in sent[0]
+    assert "49.99" in sent[0]

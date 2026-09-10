@@ -507,7 +507,11 @@ class Orchestrator:
             report.published += 1
             if self.cfg.notifications.on_publish:
                 await self.notifier.published(
-                    listing.title, format_money(listing.price, listing.currency), bazar_url
+                    listing.title,
+                    format_money(listing.price, listing.currency),
+                    bazar_url,
+                    source_url=product.url,
+                    cost=format_money(product.price, product.currency),
                 )
             await self.pacer.pause()
 

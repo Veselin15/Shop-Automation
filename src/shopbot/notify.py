@@ -98,8 +98,20 @@ class Notifier:
         except Exception as exc:  # известието никога не бива да събаря бота
             log.warning("Известието не тръгна: %s", exc)
 
-    async def published(self, title: str, price: str, url: str) -> None:
-        await self.send(f"🟢 Публикувано\n<b>{title}</b>\n{price}\n{url}")
+    async def published(self, title: str, price: str, url: str,
+                        source_url: str = "", cost: str = "") -> None:
+        """Двата адреса вървят заедно: обявата и продуктът, от който идва.
+
+        Поръчката се прави ръчно в BestSecret, затова адресът там трябва да е
+        под ръка още в известието, а не да се търси после по име.
+        """
+        lines = ["🟢 Публикувано", f"<b>{title}</b>", price]
+        if cost:
+            lines.append(f"себестойност {cost}")
+        lines.append(url)
+        if source_url:
+            lines.append(f'<a href="{source_url}">➡️ Отвори в BestSecret</a>')
+        await self.send("\n".join(lines))
 
     async def removed(self, title: str, reason: str, url: str = "") -> None:
         await self.send(f"🔴 Свалено\n<b>{title}</b>\nПричина: {reason}\n{url}")
