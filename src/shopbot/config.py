@@ -120,7 +120,7 @@ class AppraisalConfig(BaseModel):
     # ollama   — модел на самия сървър, без сметка и без трафик навън;
     # anthropic — платено.
     provider: Literal["gemini", "ollama", "anthropic"] = "gemini"
-    model: str = "gemini-3.6-flash"
+    model: str = "gemini-3.5-flash-lite"
     # Само за provider: ollama.
     ollama_url: str = "http://127.0.0.1:11434"
     # Общ праг 0..1. Артикул под него не се записва като кандидат.
