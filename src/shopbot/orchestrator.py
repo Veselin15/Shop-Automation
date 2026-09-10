@@ -131,6 +131,11 @@ class Orchestrator:
             report.errors.append(msg)
             return
 
+        # Отварянията се делят поравно между категориите. Без това първата
+        # категория (дамските очила са 700+ след филтъра) изяжда целия бюджет
+        # и часовниците, чантите и шапките не се стигат нито един цикъл.
+        per_category_fetch = max(1, fetch_budget // len(configured))
+
         for index, category in enumerate(configured):
             if fetch_budget <= 0 or tile_budget <= 0:
                 # Мълчаливото спиране тук значи, че цели категории никога не
@@ -147,8 +152,9 @@ class Orchestrator:
                 report.errors.append(f"{category.key}: {exc}")
                 continue
 
+            category_fetch = per_category_fetch
             for hit in hits:
-                if fetch_budget <= 0 or tile_budget <= 0:
+                if fetch_budget <= 0 or tile_budget <= 0 or category_fetch <= 0:
                     break
                 tile_budget -= 1
                 report.scanned += 1
@@ -167,6 +173,7 @@ class Orchestrator:
                 # сравнения в паметта не пази никого и изяжда цикъла.
                 if opened:
                     fetch_budget -= 1
+                    category_fetch -= 1
                     report.opened += 1
                     await self.pacer.pause(factor=0.25)
 
