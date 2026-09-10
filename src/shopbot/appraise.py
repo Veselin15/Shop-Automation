@@ -100,7 +100,8 @@ async def _post(url: str, *, headers: dict, payload: dict, timeout: float) -> di
     except httpx.HTTPError as exc:
         raise AppraisalUnavailable(str(exc)) from exc
     if resp.status_code != 200:
-        raise AppraisalUnavailable(f"HTTP {resp.status_code}: {resp.text[:160]}")
+        # Дълъг откъс: Google слага заместващия модел чак в края на текста.
+        raise AppraisalUnavailable(f"HTTP {resp.status_code}: {resp.text[:600]}")
     return resp.json()
 
 
@@ -151,7 +152,9 @@ async def _call_gemini(facts: str, images: list[Path], cfg: AppraisalConfig,
             "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
-                "maxOutputTokens": 512,
+                # Разсъждаващите модели ядат от този таван, преди да
+                # стигнат до отговора — оттам празни parts.
+                "maxOutputTokens": 2048,
                 "temperature": 0,
                 "responseMimeType": "application/json",
             },
@@ -161,10 +164,13 @@ async def _call_gemini(facts: str, images: list[Path], cfg: AppraisalConfig,
     candidates = body.get("candidates") or []
     if not candidates:
         # Празен списък значи блокиран или отрязан отговор, не лош продукт.
-        raise AppraisalUnavailable(f"празен отговор: {json.dumps(body)[:160]}")
+        raise AppraisalUnavailable(f"празен отговор: {json.dumps(body)[:300]}")
     text = "".join(
         part.get("text", "") for part in candidates[0].get("content", {}).get("parts", [])
     )
+    if not text.strip():
+        reason = candidates[0].get("finishReason", "?")
+        raise AppraisalUnavailable(f"отговор без текст (finishReason={reason})")
     verdict = _parse(text)
     verdict.model = cfg.model
     return verdict

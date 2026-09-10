@@ -236,7 +236,7 @@ appraisal:
   #             една оценка отнема десетки секунди.
   # anthropic — платено, за когато качеството на оценката си струва.
   provider: gemini
-  model: gemini-2.0-flash
+  model: gemini-3.6-flash
   # Само при provider: ollama.
   ollama_url: http://127.0.0.1:11434
   # Общ праг 0..1.
