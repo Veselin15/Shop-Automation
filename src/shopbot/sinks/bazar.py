@@ -623,13 +623,21 @@ class BazarSink:
         return True
 
     async def ad_exists(self, bazar_id: str, page: Page) -> bool:
-        """Проверява публично дали обявата още се вижда."""
+        """Проверява публично дали обявата още се вижда.
+
+        Изтрита обява не дава 404: Bazar.bg пренасочва към листинга на
+        рубриката със статус 200 и съвсем обикновено заглавие. Затова решава
+        адресът, на който сме се озовали — ако номерът вече не е в него,
+        обявата я няма.
+        """
         resp = await page.goto(
             f"https://bazar.bg/obiava-{bazar_id}", wait_until="domcontentloaded"
         )
         if resp is None:
             return False
         if resp.status in (404, 410):
+            return False
+        if f"obiava-{bazar_id}" not in page.url:
             return False
         title = (await page.title()).casefold()
         return "не е намерена" not in title and "not found" not in title
