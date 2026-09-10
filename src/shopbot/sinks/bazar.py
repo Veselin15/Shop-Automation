@@ -642,13 +642,36 @@ class BazarSink:
         title = (await page.title()).casefold()
         return "не е намерена" not in title and "not found" not in title
 
-    async def list_my_ads(self, page: Page) -> list[str]:
-        """ID-тата на активните обяви — за сверяване с базата."""
-        await page.goto(self.sel["my_ads_url"], wait_until="domcontentloaded")
-        await self._handle_cookies(page)
-        if not await self.is_logged_in(page):
-            raise AuthWallError(SITE, "сесията падна при четене на моите обяви")
+    async def list_my_ads(self, page: Page, max_pages: int = 20) -> list[str]:
+        """ID-тата на активните обяви — за сверяване с базата.
 
+        Списъкът е на страници по двайсет. Четенето само на първата обявява
+        всичко останало за изтрито и базата почва да лъже — затова се върви
+        до страница, която не носи нищо ново.
+        """
+        found: list[str] = []
+        seen: set[str] = set()
+        base = self.sel["my_ads_url"]
+
+        for page_no in range(1, max_pages + 1):
+            url = base if page_no == 1 else f"{base}?page={page_no}"
+            await page.goto(url, wait_until="domcontentloaded")
+            await self._handle_cookies(page)
+            if not await self.is_logged_in(page):
+                raise AuthWallError(SITE, "сесията падна при четене на моите обяви")
+            await page.wait_for_timeout(1500)
+
+            batch = await self._ads_on_page(page)
+            fresh = [i for i in batch if i not in seen]
+            if not fresh:
+                break
+            seen.update(fresh)
+            found.extend(fresh)
+
+        log.info("Bazar.bg: %d активни обяви в профила", len(found))
+        return found
+
+    async def _ads_on_page(self, page: Page) -> list[str]:
         ids = await page.evaluate(
             r"""
             () => {
