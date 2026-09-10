@@ -163,7 +163,12 @@ bazar:
     - "[data-ad-id]"
     - ".ad-row"
   my_ad_id_attr: "data-ad-id"
+  # Потвърждението не е бутон, а връзка: <a class="editbtn"
+  # href="/ads/delete/<id>?sure=yes">ИЗТРИВАНЕ</a>. Затова "button:has-text
+  # ('Изтрий')" не улучваше нищо и обявите оставаха живи след „изтриване".
   delete_confirm:
+    - "a[href*='sure=yes']"
+    - "a.editbtn:has-text('ИЗТРИВАНЕ')"
     - "button:has-text('Изтрий')"
     - "button:has-text('Потвърди')"
     - "input[type='submit'][value*='Изтрий']"
