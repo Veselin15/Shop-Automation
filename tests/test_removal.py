@@ -173,3 +173,23 @@ def test_the_notification_carries_both_links():
     assert "bazar.bg/obiava-1" in sent[0]
     assert "bestsecret.com/product.htm?code=1" in sent[0]
     assert "49.99" in sent[0]
+
+
+def test_ads_go_out_minutes_apart_not_seconds():
+    """Серия обяви една след друга е това, което вика проверката „не сте робот"."""
+    from shopbot.config import Config
+    from shopbot.humanize import Pacer
+
+    cfg = Config()
+    pacer = Pacer(cfg.runtime)
+    assert cfg.runtime.min_publish_delay_s >= 120
+    assert cfg.runtime.min_publish_delay_s > cfg.runtime.max_action_delay_s
+    assert hasattr(pacer, "publish_pause")
+
+
+def test_the_listing_promises_inspection_before_payment():
+    """Обещанието за преглед и тест е част от доверието — пази се в конфига."""
+    from shopbot.config import load_config
+
+    cfg = load_config()
+    assert "преглед и тест" in cfg.listing.extra_note

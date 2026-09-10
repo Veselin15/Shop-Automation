@@ -513,7 +513,7 @@ class Orchestrator:
                     source_url=product.url,
                     cost=format_money(product.price, product.currency),
                 )
-            await self.pacer.pause()
+            await self.pacer.publish_pause()
 
     # ------------------------------------------------------- непрекъснат режим
 

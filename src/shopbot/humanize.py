@@ -38,6 +38,17 @@ class Pacer:
         log.debug("пауза %.1fs", delay)
         await asyncio.sleep(delay)
 
+    async def publish_pause(self) -> None:
+        """Паузата между две обяви — отделна и много по-дълга.
+
+        Bazar.bg показа проверка „не сте робот" след деветнайсет обяви за
+        четири часа. Няколко минути между обявите излизат по-евтино от един
+        замразен профил.
+        """
+        delay = random.uniform(self.cfg.min_publish_delay_s, self.cfg.max_publish_delay_s)
+        log.info("пауза преди следващата обява: %.0f сек", delay)
+        await asyncio.sleep(delay)
+
     async def micro_pause(self) -> None:
         """Кратка пауза между полета в една форма."""
         await asyncio.sleep(random.uniform(0.4, 1.8))

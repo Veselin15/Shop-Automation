@@ -22,6 +22,9 @@ class RuntimeConfig(BaseModel):
     active_hours: str = "09:00-22:30"
     min_action_delay_s: float = 20.0
     max_action_delay_s: float = 75.0
+    # Между две ПУБЛИКУВАНИ обяви — отделно и по-дълго от другите действия.
+    min_publish_delay_s: float = 180.0
+    max_publish_delay_s: float = 300.0
 
     @property
     def active_window(self) -> tuple[time, time]:
