@@ -114,7 +114,15 @@ class Notifier:
         await self.send("\n".join(lines))
 
     async def removed(self, title: str, reason: str, url: str = "") -> None:
-        await self.send(f"🔴 Свалено\n<b>{title}</b>\nПричина: {reason}\n{url}")
+        """Адресът върви и тук: показва коя точно обява е паднала.
+
+        Самата страница вече не се отваря — Bazar.bg пренасочва изтритите —
+        но номерът в адреса е достатъчен, за да се намери обявата в профила.
+        """
+        lines = ["🔴 Свалено", f"<b>{title}</b>", f"Причина: {reason}"]
+        if url:
+            lines.append(url)
+        await self.send("\n".join(lines))
 
     async def auth_wall(self, site: str) -> None:
         await self.send(

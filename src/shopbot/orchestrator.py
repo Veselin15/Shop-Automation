@@ -373,8 +373,8 @@ class Orchestrator:
         finally:
             await session.stop()
 
-    def _pending_removals(self) -> list[tuple[str, str, str, str]]:
-        """(product_id, bazar_id, title, причина) за всичко, което трябва да падне."""
+    def _pending_removals(self) -> list[tuple[str, str, str, str, str]]:
+        """(product_id, bazar_id, title, причина, адрес) за всичко за сваляне."""
         if not self.cfg.removal.auto_remove:
             return []
 
@@ -385,7 +385,10 @@ class Orchestrator:
                 continue
             reason = self._removal_reason(product, row)
             if reason:
-                pending.append((row["product_id"], row["bazar_id"] or "", row["title"], reason))
+                pending.append((
+                    row["product_id"], row["bazar_id"] or "", row["title"],
+                    reason, row["bazar_url"] or "",
+                ))
         return pending
 
     def _removal_reason(self, product: Product, row) -> str:
@@ -413,7 +416,7 @@ class Orchestrator:
         self, sink: BazarSink, page, removals, report: CycleReport, dry_run: bool
     ) -> None:
         limiter = self._remove_limiter()
-        for product_id, bazar_id, title, reason in removals:
+        for product_id, bazar_id, title, reason, bazar_url in removals:
             if not limiter.allow():
                 log.info("дневният лимит за сваляне е изчерпан")
                 break
@@ -439,7 +442,7 @@ class Orchestrator:
                 limiter.consume()
                 report.removed += 1
                 if self.cfg.notifications.on_remove:
-                    await self.notifier.removed(title, reason)
+                    await self.notifier.removed(title, reason, bazar_url)
             await self.pacer.pause()
 
     async def _publish_candidates(

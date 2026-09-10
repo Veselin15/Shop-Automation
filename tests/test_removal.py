@@ -193,3 +193,27 @@ def test_the_listing_promises_inspection_before_payment():
 
     cfg = load_config()
     assert "преглед и тест" in cfg.listing.extra_note
+
+
+def test_the_removal_notice_names_which_ad_fell():
+    """Без адрес известието не казва коя от двайсет обяви е паднала."""
+    import asyncio
+
+    sent: list[str] = []
+    n = Notifier()
+    n.send = lambda text: sent.append(text) or asyncio.sleep(0)
+
+    asyncio.run(n.removed("Слънчеви очила Carrera", "изчерпан е",
+                          "https://bazar.bg/obiava-56010352/slanchevi-ochila"))
+    assert "obiava-56010352" in sent[0]
+    assert "изчерпан" in sent[0]
+
+
+def test_pending_removals_carry_the_ad_url(orch):
+    """Адресът идва от базата заедно с причината, иначе известието е сляпо."""
+    o, db, _ = orch
+    publish(db, make(price=50.0, orig=200.0))
+    db.upsert_product(make(price=120.0, orig=200.0))   # 40%, под твърдия под
+    pending = o._pending_removals()
+    assert len(pending) == 1
+    assert pending[0][4].startswith("https://bazar.bg/obiava-")
