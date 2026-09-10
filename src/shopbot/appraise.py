@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 SYSTEM_PROMPT = """Ти оценяваш стока за препродажба в български сайт за обяви (Bazar.bg).
 
@@ -220,3 +221,31 @@ async def appraise(
     if cfg.provider == "anthropic":
         return await _call_anthropic(facts, picked, cfg, api_key)
     raise AppraisalUnavailable(f"непознат доставчик: {cfg.provider}")
+
+
+async def list_gemini_models(api_key: str) -> list[dict]:
+    """Кои модели приема този ключ. Имената им се сменят и се гадае трудно."""
+    if not api_key:
+        raise AppraisalUnavailable("липсва GEMINI_API_KEY")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                GEMINI_LIST_URL, headers={"x-goog-api-key": api_key},
+                params={"pageSize": 200},
+            )
+    except httpx.HTTPError as exc:
+        raise AppraisalUnavailable(str(exc)) from exc
+    if resp.status_code != 200:
+        raise AppraisalUnavailable(f"HTTP {resp.status_code}: {resp.text[:600]}")
+
+    models = []
+    for m in resp.json().get("models", []):
+        if "generateContent" not in m.get("supportedGenerationMethods", []):
+            continue
+        models.append({
+            "name": m.get("name", "").removeprefix("models/"),
+            "label": m.get("displayName", ""),
+            "input": m.get("inputTokenLimit", 0),
+            "output": m.get("outputTokenLimit", 0),
+        })
+    return models

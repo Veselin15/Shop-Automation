@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .appraise import AppraisalUnavailable, appraise
+from .appraise import AppraisalUnavailable, appraise, list_gemini_models
 from .browser import (
     BrowserMissing,
     BrowserSession,
@@ -702,6 +702,36 @@ def inspect_form(
             console.print(f"\nСнимка на формата: {shot}")
         finally:
             await session.stop()
+
+    _run_async(_run())
+
+
+@app.command("models")
+def models_cmd(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
+    """Кои Gemini модели приема ключът от .env.
+
+    Имената се сменят (спрян модел връща 404), а бързината им си личи от
+    самото име: вариантите 'lite' и 'flash' отговарят за секунди, докато
+    разсъждаващите мислят по половин минута на артикул.
+    """
+    setup_logging(verbose)
+    cfg, _, _ = _ctx()
+
+    async def _run() -> None:
+        try:
+            found = await list_gemini_models(cfg.secrets.gemini_api_key)
+        except AppraisalUnavailable as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from None
+
+        table = Table(title="Gemini модели за този ключ")
+        table.add_column("име")
+        table.add_column("описание", overflow="fold")
+        for m in sorted(found, key=lambda x: x["name"]):
+            mark = " [green]<- в конфига[/green]" if m["name"] == cfg.appraisal.model else ""
+            table.add_row(m["name"] + mark, m["label"])
+        console.print(table)
+        console.print("\nСмяната става в config/config.yaml -> appraisal.model")
 
     _run_async(_run())
 
