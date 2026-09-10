@@ -737,6 +737,50 @@ def models_cmd(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
 
 
 @app.command()
+def remove(
+    bazar_id: str = typer.Argument(..., help="номер на обявата в Bazar.bg"),
+    reason: str = typer.Option("ръчно сваляне", "--reason", help="какво да се запише в базата"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Сваля една обява и отбелязва това в базата.
+
+    Същият път, по който минава и автоматичното сваляне — затова служи и за
+    проверка, че изтриването наистина работи, без да се чака промяна в цената.
+    """
+    setup_logging(verbose)
+    cfg, db, notifier = _ctx()
+
+    async def _run() -> None:
+        session = BrowserSession(
+            "bazar", cfg.profiles_dir / "bazar", cfg.runtime.headless,
+            seed_state=cfg.session_file("bazar"),
+        )
+        await session.start()
+        try:
+            sink = BazarSink(cfg, session, Pacer(cfg.runtime))
+            page = await session.new_page()
+            await sink.ensure_logged_in(page)
+
+            if not await sink.delete_ad(bazar_id, page):
+                console.print(f"[red]Обява {bazar_id} още е активна.[/red]")
+                raise typer.Exit(1)
+
+            row = db.conn.execute(
+                "SELECT product_id, title FROM listings WHERE bazar_id = ?", (bazar_id,)
+            ).fetchone()
+            if row is not None:
+                db.mark_removed(row["product_id"], reason)
+                db.log_event("removed", reason, row["product_id"])
+                console.print(f"[green]Свалена:[/green] {row['title']}")
+            else:
+                console.print("[yellow]Свалена, но я няма в базата.[/yellow]")
+        finally:
+            await session.stop()
+
+    _run_async(_run())
+
+
+@app.command()
 def sync(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     """Сверява базата с реално активните обяви в Bazar.bg.
 
