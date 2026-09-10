@@ -1,7 +1,7 @@
 import pytest
 
 from shopbot.config import ListingConfig, load_config
-from shopbot.listing import build_title, clean_source_text, size_hint
+from shopbot.listing import build_title, clean_source_text, pick_color, size_hint
 from shopbot.models import Product, Size
 from shopbot.parsing import parse_money, parse_percent, product_id_from_url
 
@@ -139,3 +139,20 @@ def test_paging_keeps_the_filter_and_its_star():
     paged = _paged_url(base, 3)
     assert "filterParam_relativeSavingRanges=70.0-*" in paged
     assert "page=3" in paged
+
+
+def test_color_comes_from_the_product_text():
+    """Bazar.bg иска цвят; BestSecret не го дава в отделно поле."""
+    cfg = load_config().listing
+    assert pick_color("Leather wallet cognac", cfg) == "Кафеви"
+    assert pick_color("Crossbody bag, navy", cfg) == "Сини"
+    # По-дългата дума бие по-късата, за да не спечели подплатата.
+    assert pick_color("Bucket hat, dark green with red lining", cfg) == "Зелени"
+
+
+def test_unknown_color_falls_back_instead_of_inventing_one():
+    cfg = load_config().listing
+    guess = pick_color("Sunglasses Hyperfit 23/S", cfg)
+    assert guess == cfg.color_fallback
+    # Каквото и да е избрано за резерва, трябва да е опция на Bazar.bg.
+    assert guess in set(cfg.color_map.values()) | {""}

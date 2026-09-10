@@ -137,6 +137,13 @@ class ListingConfig(BaseModel):
     # Различни по категория — ключът е от source.categories, защото
     # "Вид" е Мъжки/Дамски, а мъжките и дамските очила са в една рубрика.
     category_attributes: dict[str, dict[str, str]] = Field(default_factory=dict)
+    # Цветът е задължителен при чанти и портфейли. BestSecret не го дава в
+    # отделно поле, затова се търси по дума в заглавието и описанието:
+    # дума в текста -> опция в Bazar.bg.
+    color_map: dict[str, str] = Field(default_factory=dict)
+    # Какво да пише, когато в текста няма цвят. Празно = обявата се проваля
+    # шумно, вместо да получи грешен цвят.
+    color_fallback: str = ""
     phone: str = ""
     condition: str = "Ново"
     max_images: int = 6

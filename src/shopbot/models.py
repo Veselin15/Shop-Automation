@@ -93,6 +93,8 @@ class Listing:
     category_id: int = 0
     # Категорията в източника — от нея зависи "Вид" (Мъжки/Дамски).
     category_key: str = ""
+    # Цвят с думите на Bazar.bg ("Черни"), не с тези на BestSecret.
+    color: str = ""
     image_paths: list[str] = field(default_factory=list)
     bazar_id: str | None = None
     bazar_url: str | None = None

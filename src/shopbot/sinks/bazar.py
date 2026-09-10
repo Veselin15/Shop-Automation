@@ -261,7 +261,7 @@ class BazarSink:
         await page.wait_for_timeout(3000)
 
         await self._fill_category(page, listing.category_id)
-        await self._fill_form_fields(page, listing.category_key)
+        await self._fill_form_fields(page, listing.category_key, listing.color)
         await self._fill_description(page, listing.description)
         await self._fill_price(page, listing.price)
         await self._fill_location(page, self.cfg.listing.location)
@@ -356,7 +356,9 @@ class BazarSink:
             raise PublishError(f"не мога да задам рубрика {category_id}")
         await self.pacer.micro_pause()
 
-    async def _fill_form_fields(self, page: Page, category_key: str) -> None:
+    async def _fill_form_fields(
+        self, page: Page, category_key: str, color: str = ""
+    ) -> None:
         """Попълва полетата, които се появяват след избор на рубрика.
 
         Bazar.bg добавя задължителни полета според рубриката: "Изберете вид"
@@ -370,6 +372,10 @@ class BazarSink:
         """
         wanted = dict(self.cfg.listing.form_defaults)
         wanted.update(self.cfg.listing.category_attributes.get(category_key, {}))
+        # Цветът се появява само при някои рубрики; ако го няма, просто не се
+        # напасва на нищо и остава без ефект.
+        if color:
+            wanted["Изберете цвят"] = color
         if not wanted:
             return
 
@@ -466,7 +472,8 @@ class BazarSink:
                         .map(o => o.text.trim()).slice(0, 8).join(' / '));
                   }
                   const groups = {};
-                  for (const el of document.querySelectorAll(form + ' input[type=radio]')) {
+                  for (const el of document.querySelectorAll(
+                         form + ' input[type=radio], ' + form + ' input[type=checkbox]')) {
                     if (el.offsetParent === null) continue;
                     (groups[el.name] = groups[el.name] || []).push(el);
                   }

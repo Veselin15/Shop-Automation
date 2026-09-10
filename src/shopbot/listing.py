@@ -33,6 +33,25 @@ def size_hint(product: Product, limit: int = 4) -> str:
     return "размери " + ", ".join(sizes[:limit]) + " и др."
 
 
+def pick_color(text: str, cfg: ListingConfig) -> str:
+    """Цветът по думите на Bazar.bg, изчетен от текста на продукта.
+
+    BestSecret няма отделно поле за цвят, но почти винаги го казва в името
+    или описанието ("Sunglasses black", "Leather wallet cognac"). Търси се
+    най-дългата съвпаднала дума, за да бие "navy blue" над "blue", а
+    "dark green" над "red" в "dark green with red trim".
+    """
+    haystack = f" {text.lower()} "
+    hits = [
+        (len(word), option)
+        for word, option in cfg.color_map.items()
+        if word and f" {word.lower()} " in haystack
+    ]
+    if hits:
+        return max(hits)[1]
+    return cfg.color_fallback
+
+
 def build_title(product: Product, cfg: ListingConfig) -> str:
     """Заглавието започва с българска дума.
 
@@ -95,5 +114,8 @@ def build_listing(
         currency=price.currency,
         category_id=category_id,
         category_key=product.category_key,
+        color=pick_color(
+            " ".join((product.name, product.color, product.description)), cfg
+        ),
         content_hash=product.content_hash(),
     )
