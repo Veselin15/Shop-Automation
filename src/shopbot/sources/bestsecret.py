@@ -452,6 +452,9 @@ def _paged_url(base: str, page_no: int, sort_query: str = "") -> str:
 
     Филтрираните адреси от BestSecret идват с готов query string, затова
     параметрите се сливат, а не се залепват след нов '?'.
+
+    Звездичката в "70.0-*" остава незакодирана — BestSecret връща празен
+    листинг, ако тя дойде като %2A.
     """
     parts = urlsplit(base)
     params = dict(parse_qsl(parts.query, keep_blank_values=True))
@@ -461,4 +464,4 @@ def _paged_url(base: str, page_no: int, sort_query: str = "") -> str:
     if page_no > 1:
         params["page"] = str(page_no)
 
-    return urlunsplit(parts._replace(query=urlencode(params)))
+    return urlunsplit(parts._replace(query=urlencode(params, safe="*")))

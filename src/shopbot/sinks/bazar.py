@@ -456,7 +456,11 @@ class BazarSink:
                   const out = [];
                   for (const el of document.querySelectorAll(form + ' select')) {
                     if (el.offsetParent === null) continue;
-                    if (el.value && el.value !== '0') continue;
+                    // Празно е и когато е избран самият надпис "Изберете ...":
+                    // Bazar.bg дава на тези опции истинска стойност, не 0.
+                    const picked = (el.selectedOptions[0] || {}).text || '';
+                    const placeholder = /^\s*(Изберете|Избери|Всички)/.test(picked);
+                    if (el.value && el.value !== '0' && !placeholder) continue;
                     out.push((labelFor(el) || el.name || el.id) + ' -> възможни: ' +
                       [...el.options].filter(o => o.value && o.value !== '0')
                         .map(o => o.text.trim()).slice(0, 8).join(' / '));

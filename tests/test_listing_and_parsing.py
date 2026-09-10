@@ -1,6 +1,6 @@
 import pytest
 
-from shopbot.config import ListingConfig
+from shopbot.config import ListingConfig, load_config
 from shopbot.listing import build_title, clean_source_text, size_hint
 from shopbot.models import Product, Size
 from shopbot.parsing import parse_money, parse_percent, product_id_from_url
@@ -112,3 +112,30 @@ def test_content_hash_reacts_to_price_and_sizes():
 def test_discount_pct_is_zero_when_not_discounted():
     assert product(price=100.0, orig_price=100.0).discount_pct == 0
     assert product(price=50.0, orig_price=200.0).discount_pct == 75
+
+
+def test_every_category_url_carries_the_discount_filter():
+    """Филтърът на BestSecret е част от стратегията, не украса.
+
+    Без него ботът обхожда 456 плочки на категория, за да намери три
+    подходящи; с него листингът връща само намаленото 70%+.
+    """
+    cfg = load_config()
+    for category in cfg.source.categories:
+        url = category.resolve(cfg.source.base_url)
+        assert "filterParam_relativeSavingRanges=" in url, category.key
+        floor = url.split("filterParam_relativeSavingRanges=")[1].split("-")[0]
+        assert float(floor) >= cfg.selection.min_discount_pct, category.key
+
+
+def test_paging_keeps_the_filter_and_its_star():
+    """BestSecret връща празен листинг, ако звездичката дойде като %2A."""
+    from shopbot.sources.bestsecret import _paged_url
+
+    base = (
+        "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES"
+        "&category=women_accessoires_uhren&filterParam_relativeSavingRanges=70.0-*"
+    )
+    paged = _paged_url(base, 3)
+    assert "filterParam_relativeSavingRanges=70.0-*" in paged
+    assert "page=3" in paged

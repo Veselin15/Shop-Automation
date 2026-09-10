@@ -45,48 +45,52 @@ source:
   # Адресите са взети от логнат профил и са проверени. Схемата на BestSecret е
   # /category.htm?area=<РАЗДЕЛ>&category=<вътрешно_име>[&gender=MALE].
   #
-  # Може да ги замениш с филтрирани адреси (намаление, марки, цена) — просто
-  # копирай адресната лента, след като си сложил филтрите в сайта. Ботът слива
-  # query параметрите правилно, страницирането не чупи филтрите.
-  # Филтърът в сайта пести заявки, но не е задължителен: плочката в листинга
-  # носи марка, цена и намаление, така че подборът се прави и без него.
+  # Всеки адрес носи филтъра на самия BestSecret:
+  #     filterParam_relativeSavingRanges=70.0-*
+  # Той връща само намаленото 70%+, вместо ботът да преглежда 456 плочки на
+  # категория, от които стават 3. За 80%+ смени числото на 80.0 — навсякъде
+  # или само в отделни категории.
+  #
+  # Други филтри (марки, цена) се добавят по същия начин: слагаш ги в сайта и
+  # копираш адресната лента. Ботът слива query параметрите правилно, така че
+  # страницирането не чупи филтъра.
   categories:
     - key: sunglasses_women
       label: "Слънчеви очила (дамски)"
-      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_sonnenbrillen"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_sonnenbrillen&filterParam_relativeSavingRanges=70.0-*"
     - key: sunglasses_men
       label: "Слънчеви очила (мъжки)"
-      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_sonnenbrillen&gender=MALE"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_sonnenbrillen&gender=MALE&filterParam_relativeSavingRanges=70.0-*"
     - key: watches_women
       label: "Часовници (дамски)"
-      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_uhren"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_uhren&filterParam_relativeSavingRanges=70.0-*"
     - key: watches_men
       label: "Часовници (мъжки)"
-      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_uhren&gender=MALE"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_uhren&gender=MALE&filterParam_relativeSavingRanges=70.0-*"
     - key: bags_women
       label: "Дамски чанти"
-      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_taschen"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_taschen&filterParam_relativeSavingRanges=70.0-*"
     - key: bags_men
       label: "Мъжки чанти и crossbody"
-      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_taschen&gender=MALE"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_taschen&gender=MALE&filterParam_relativeSavingRanges=70.0-*"
     - key: small_accessories_women
       label: "Портфейли, ключодържатели (дамски)"
-      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_smallaccessories"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_smallaccessories&filterParam_relativeSavingRanges=70.0-*"
     - key: small_accessories_men
       label: "Портфейли, ключодържатели (мъжки)"
-      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_smallaccessories&gender=MALE"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_smallaccessories&gender=MALE&filterParam_relativeSavingRanges=70.0-*"
     - key: hats_women
       label: "Шапки (дамски)"
-      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_muetzen"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_muetzen&filterParam_relativeSavingRanges=70.0-*"
     - key: hats_men
       label: "Шапки (мъжки)"
-      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_muetzen&gender=MALE"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_muetzen&gender=MALE&filterParam_relativeSavingRanges=70.0-*"
     - key: scarves_women
       label: "Шалове (дамски)"
-      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_schalstuecher"
+      url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_schalstuecher&filterParam_relativeSavingRanges=70.0-*"
     - key: scarves_men
       label: "Шалове (мъжки)"
-      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_schals&gender=MALE"
+      url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_schals&gender=MALE&filterParam_relativeSavingRanges=70.0-*"
 
 selection:
   # Твърд праг. Филтърът в BestSecret вече отсява, това е втора защита.
