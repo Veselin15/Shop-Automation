@@ -66,9 +66,12 @@ bestsecret:
     - ".main-prices .rrp"
   pdp_discount:
     - ".main-prices .discount-tag"
+  # Истинските характеристики (механизъм, материя, размери) са в
+  # .details-section; ".description" не хваща нищо на текущия сайт.
   pdp_description:
-    - ".description"
     - ".details-section"
+    - ".accordion__content"
+    - ".description"
   pdp_images:
     - ".image-gallery img"
     - ".gallery-image"

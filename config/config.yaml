@@ -281,21 +281,17 @@ pricing:
   output_currency: EUR
   fx:
     eur_bgn: 1.95583
-  default_markup: 1.45
+  default_markup: 1.30
   markup_by_category:
-    # Дребните артикули носят малко в абсолютна стойност — по-висок процент.
-    small_accessories_women: 1.65
-    small_accessories_men: 1.65
-    scarves_women: 1.60
-    scarves_men: 1.60
-    hats_women: 1.60
-    hats_men: 1.60
-    sunglasses_women: 1.55
-    sunglasses_men: 1.55
-    bags_women: 1.45
-    bags_men: 1.45
-    watches_women: 1.40
-    watches_men: 1.40
+    # Само две изключения от общата надценка:
+    # чантите, където абсолютната сума боде (45% върху 120 € са 54 € отгоре,
+    # и купувачът се сеща за магазина);
+    bags_women: 1.25
+    bags_men: 1.25
+    # и дребните артикули, където процентът е малко пари (45% върху 40 € са
+    # 18 € и никой не ги усеща).
+    small_accessories_women: 1.45
+    small_accessories_men: 1.45
   # Доставка BestSecret -> теб, влиза в себестойността преди надценката.
   shipping_buffer: 4.50
   # Заявка + 10 дни чакане + разходка до куриера. Под това не си струва.
@@ -410,6 +406,24 @@ listing:
   # грешен цвят, остави полето празно.
   color_fallback: "Черни"
 
+  # Цветът на Bazar.bg -> прилагателно за заглавието. Върви с думата "цвят",
+  # затова е в мъжки род и пасва и на часовник, и на чанта, и на очила.
+  color_title_map:
+    "Черни": "черен"
+    "Бели": "бял"
+    "Червени": "червен"
+    "Зелени": "зелен"
+    "Сини": "син"
+    "Бежови": "бежов"
+    "Кафеви": "кафяв"
+    "Жълти": "жълт"
+    "Розови": "розов"
+    "Лилави": "лилав"
+    "Сиви": "сив"
+
+  # Колко характеристики от продуктовата страница влизат в описанието.
+  max_specs: 8
+
   # "Вид" зависи от категорията в BestSecret, а не от рубриката: мъжките и
   # дамските очила са в една и съща рубрика 339.
   category_attributes:
@@ -429,16 +443,35 @@ listing:
   # Телефон за обявата. Оставено празно = ползва се този от профила.
   phone: ""
 
-  title_template: "{prefix} {brand} {name}"
+  # "Чисто нов" отпред казва най-важното още в резултатите от търсенето,
+  # а цветът се долепя само ако остава място под title_max_len.
+  title_template: "{condition_word} {prefix_lower} {brand} {name}"
+
+  # "Чисто нов" се съгласува с рода на артикула: часовник е мъжки род,
+  # чанта — женски, очила — множествено число.
+  condition_word:
+    sunglasses_women: "Чисто нови"
+    sunglasses_men: "Чисто нови"
+    watches_women: "Чисто нов"
+    watches_men: "Чисто нов"
+    bags_women: "Чисто нова"
+    bags_men: "Чисто нова"
+    small_accessories_women: "Чисто нов"
+    small_accessories_men: "Чисто нов"
+    hats_women: "Чисто нова"
+    hats_men: "Чисто нова"
+    scarves_women: "Чисто нов"
+    scarves_men: "Чисто нов"
   title_max_len: 70
 
   description_template: |
-    {brand} — {name}
+    {brand} {name}
 
-    Чисто нов и оригинален артикул, с етикет и фирмена опаковка.
+    Чисто нов, неупотребяван артикул с фабрични етикети и фирмена опаковка.
     {color_line}{size_line}{material_line}
+    {specs_block}
     Каталожна цена: {orig_price}
-    Моята цена: {price}
+    Моята цена: {price} — {discount} под каталожната
 
     ВАЖНО — начин на поръчка
     {delivery_note}

@@ -172,6 +172,13 @@ class ListingConfig(BaseModel):
     # Какво да пише, когато в текста няма цвят. Празно = обявата се проваля
     # шумно, вместо да получи грешен цвят.
     color_fallback: str = ""
+    # Цветът на Bazar.bg ("Черни") -> прилагателно за заглавието ("черен"),
+    # което върви с думата "цвят" при всякакъв род на артикула.
+    color_title_map: dict[str, str] = Field(default_factory=dict)
+    # Колко характеристики от продуктовата страница да влязат в описанието.
+    max_specs: int = 8
+    # "Чисто нов/нова/нови" по род на артикула в съответната категория.
+    condition_word: dict[str, str] = Field(default_factory=dict)
     phone: str = ""
     condition: str = "Ново"
     max_images: int = 6

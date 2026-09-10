@@ -7,6 +7,7 @@ import re
 from .config import ListingConfig
 from .models import Listing, Product
 from .pricing import PriceBreakdown, format_money
+from .specs import format_specs, parse_specs
 
 # Всяко споменаване на източника се маха от текста — и защото издава откъде
 # идва стоката, и защото звучи като copy-paste от чужд сайт.
@@ -33,13 +34,11 @@ def size_hint(product: Product, limit: int = 4) -> str:
     return "размери " + ", ".join(sizes[:limit]) + " и др."
 
 
-def pick_color(text: str, cfg: ListingConfig) -> str:
-    """Цветът по думите на Bazar.bg, изчетен от текста на продукта.
+def detect_color(text: str, cfg: ListingConfig) -> str:
+    """Цветът, само когато наистина пише в текста. Иначе празно.
 
-    BestSecret няма отделно поле за цвят, но почти винаги го казва в името
-    или описанието ("Sunglasses black", "Leather wallet cognac"). Търси се
-    най-дългата съвпаднала дума, за да бие "navy blue" над "blue", а
-    "dark green" над "red" в "dark green with red trim".
+    Търси се най-дългата съвпаднала дума, за да бие "navy blue" над "blue",
+    а "dark green" над "red" в "dark green with red trim".
     """
     haystack = f" {text.lower()} "
     hits = [
@@ -47,9 +46,17 @@ def pick_color(text: str, cfg: ListingConfig) -> str:
         for word, option in cfg.color_map.items()
         if word and f" {word.lower()} " in haystack
     ]
-    if hits:
-        return max(hits)[1]
-    return cfg.color_fallback
+    return max(hits)[1] if hits else ""
+
+
+def pick_color(text: str, cfg: ListingConfig) -> str:
+    """Цветът за формата на Bazar.bg, където полето е задължително.
+
+    Тук резервната стойност е оправдана — иначе обявата изобщо не тръгва.
+    В заглавието обаче се ползва detect_color: пред купувача не се твърди
+    цвят, който никъде не пише.
+    """
+    return detect_color(text, cfg) or cfg.color_fallback
 
 
 def build_title(product: Product, cfg: ListingConfig) -> str:
@@ -59,14 +66,33 @@ def build_title(product: Product, cfg: ListingConfig) -> str:
     "Sunglasses Roxie" не се намира от никого. Освен това сайтът иска поне
     15 символа в заглавието.
     """
+    prefix = cfg.title_prefix.get(product.category_key, "")
     raw = cfg.title_template.format(
-        prefix=cfg.title_prefix.get(product.category_key, ""),
+        condition_word=cfg.condition_word.get(product.category_key, "Чисто нов"),
+        prefix=prefix,
+        prefix_lower=prefix[:1].lower() + prefix[1:] if prefix else "",
         brand=product.brand,
         name=product.name,
         size_hint=size_hint(product, limit=2),
         color=product.color,
     )
     title = WHITESPACE.sub(" ", clean_source_text(raw)).strip(" -–—,")
+
+    # Цветът се долепя само ако остава място — по-добре без него, отколкото
+    # отрязан по средата на думата.
+    color_word = cfg.color_title_map.get(detect_color(
+        " ".join((product.name, product.color, product.description)), cfg
+    ), "")
+    if color_word:
+        # "Chronograph black, черен цвят" казва едно и също два пъти на два езика.
+        for english in cfg.color_map:
+            title = re.sub(
+                rf"[\s,-]*\b{re.escape(english)}\b\s*$", "", title, flags=re.IGNORECASE
+            )
+        with_color = f"{title}, {color_word} цвят"
+        if len(with_color) <= cfg.title_max_len:
+            return with_color
+
     if len(title) <= cfg.title_max_len:
         return title
     # Реже на дума, не по средата на дума.
@@ -82,7 +108,11 @@ def build_description(
     size_line = f"Налични размери: {', '.join(sizes)}\n" if sizes else ""
     material_line = f"Материя: {product.material}\n" if product.material else ""
 
+    specs = parse_specs(product.description, cfg.max_specs)
+    specs_block = "Характеристики:\n" + format_specs(specs) + "\n" if specs else ""
+
     body = cfg.description_template.format(
+        specs_block=specs_block,
         brand=product.brand,
         name=product.name,
         color_line=color_line,

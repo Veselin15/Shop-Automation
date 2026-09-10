@@ -226,8 +226,30 @@ def test_title_starts_with_a_bulgarian_word(real):
     """Bazar.bg се търси на кирилица; чисто английско заглавие не се намира."""
     product = accessory(brand="Carrera", name="Sunglasses Hyperfit 23/S")
     title = build_title(product, real.listing)
-    assert title.startswith("Слънчеви очила"), title
+    assert title.startswith("Чисто нови слънчеви очила"), title
     assert len(title) >= 15, "сайтът иска поне 15 знака"
+
+
+def test_the_condition_word_agrees_with_the_gender(real):
+    """„Чисто нов дамска чанта" издава робот от първата дума."""
+    starts = {
+        "watches_men": "Чисто нов мъжки часовник",
+        "bags_women": "Чисто нова дамска чанта",
+        "sunglasses_women": "Чисто нови слънчеви очила",
+    }
+    for key, expected in starts.items():
+        title = build_title(accessory(brand="B", name="Model", category_key=key), real.listing)
+        assert title.startswith(expected), title
+
+
+def test_the_title_claims_a_colour_only_when_the_text_says_one(real):
+    """Резервният цвят пълни задължително поле, но не бива да лъже в заглавието."""
+    known = build_title(accessory(brand="B", name="Wallet cognac",
+                                  category_key="small_accessories_men"), real.listing)
+    unknown = build_title(accessory(brand="B", name="Wallet",
+                                    category_key="small_accessories_men"), real.listing)
+    assert "кафяв цвят" in known
+    assert "цвят" not in unknown, unknown
 
 
 def test_every_category_has_a_bulgarian_title_prefix(real):
