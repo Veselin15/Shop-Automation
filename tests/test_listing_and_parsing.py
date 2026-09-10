@@ -156,3 +156,37 @@ def test_unknown_color_falls_back_instead_of_inventing_one():
     assert guess == cfg.color_fallback
     # Каквото и да е избрано за резерва, трябва да е опция на Bazar.bg.
     assert guess in set(cfg.color_map.values()) | {""}
+
+
+# --------------------------------------------- характеристики от източника
+
+
+def test_specs_are_read_from_one_long_line():
+    """Свитият акордеон на BestSecret връща всичко слято — пак трябва да се чете."""
+    from shopbot.specs import parse_specs
+
+    blob = ("Product Information Item number: 40785679-003 Sunglasses by Carrera "
+            "Model name: Hyperfit 23/S Frame colour: black Lens colour: grey "
+            "UV protection: 400 Material: plastic Fit & Measurements "
+            "Measurements for one size: width 14 cm")
+    specs = dict(parse_specs(blob))
+    assert specs["Цвят на рамката"] == "черен"
+    assert specs["Материя"] == "пластмаса"
+    assert "Fit" not in specs["Материя"], "заглавието на секцията не е стойност"
+    assert specs["Размери"] == "ширина 14 см"
+
+
+def test_unknown_fields_are_dropped_not_guessed():
+    """Измислена характеристика е обещание, което продавачът после плаща."""
+    from shopbot.specs import parse_specs
+
+    specs = dict(parse_specs("Warranty: 24 months Material: leather"))
+    assert specs == {"Материя": "естествена кожа"}
+
+
+def test_model_numbers_keep_their_capitals():
+    from shopbot.specs import parse_specs
+
+    specs = dict(parse_specs("Manufacturer's item number: MC2-B252S Water resistance: 3 ATM"))
+    assert specs["Модел"] == "MC2-B252S"
+    assert specs["Водоустойчивост"] == "3 ATM"

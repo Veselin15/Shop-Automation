@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import re
 
-# Заглавия на секции и редове, които не бива да влизат в обявата:
-# вътрешни номера на източника и неговите правила за връщане.
-SKIP_LINES = re.compile(
-    r"^(product information|fit & measurements|materials & care|"
-    r"information on product safety|item number|please note)",
+# Заглавията на секциите стоят между полетата и се лепят за стойността
+# отпред ("plastic Fit & Measurements"), затова стойността се реже на тях.
+SECTIONS = re.compile(
+    r"\s*(product information|fit & measurements|materials & care|"
+    r"information on product safety|please note|item number).*$",
     re.IGNORECASE,
 )
 
@@ -48,6 +48,9 @@ KEYS = {
     "measurements": "Размери",
     "measurements for one size": "Размери",
     "details": "Детайли",
+    "model name": "Модел",
+    "shape": "Форма",
+    "size": "Размер",
     "care instructions": "Поддръжка",
 }
 
@@ -66,6 +69,12 @@ VALUES = {
     "silk": "коприна",
     "polyester": "полиестер",
     "polyurethane": "полиуретан",
+    "plastic": "пластмаса",
+    "acetate": "ацетат",
+    "metal": "метал",
+    "titanium": "титан",
+    "canvas": "плат",
+    "suede": "велур",
     "clip closure": "щипкова закопчалка",
     "buckle": "класическа катарама",
     "zip": "цип",
@@ -115,19 +124,37 @@ def _translate_value(value: str) -> str:
 
 
 def parse_specs(raw: str, limit: int = 8) -> list[tuple[str, str]]:
-    """Двойки (българско име, стойност) от текста на продуктовата страница."""
+    """Двойки (българско име, стойност) от текста на продуктовата страница.
+
+    Текстът идва ту на редове, ту слят в едно изречение — акордеонът на
+    BestSecret е свит и тогава `innerText` не дава нови редове. Затова не се
+    разчита на редове: търсят се самите познати ключове, а стойността е
+    всичко до следващия ключ.
+    """
+    text = " ".join((raw or "").split())
+    if not text:
+        return []
+
+    pattern = "|".join(
+        re.escape(k) for k in sorted(KEYS, key=len, reverse=True)
+    )
+    matches = list(re.finditer(rf"({pattern})\s*:", text, re.IGNORECASE))
+
     specs: list[tuple[str, str]] = []
     seen: set[str] = set()
+    for i, m in enumerate(matches):
+        bg = KEYS[m.group(1).lower()]
+        if bg in seen:
+            continue
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        value = text[m.end():end].strip(" .,;")
 
-    for line in (raw or "").splitlines():
-        line = " ".join(line.split())
-        if not line or SKIP_LINES.match(line):
-            continue
-        key, sep, value = line.partition(":")
-        if not sep or not value.strip():
-            continue
-        bg = KEYS.get(key.strip().lower())
-        if not bg or bg in seen:
+        # Между две полета стои и свободен текст — заглавие на секция или
+        # "Sunglasses by Carrera". Нито едното не е част от стойността.
+        value = SECTIONS.sub("", value)
+        value = re.split(r"(?<=[a-zа-я])\s+(?=[A-ZА-Я][a-zа-я]+\s+by)", value)[0]
+        value = value.strip(" .,;")
+        if not value or len(value) > 160:
             continue
         seen.add(bg)
         specs.append((bg, _translate_value(value)))
