@@ -71,6 +71,16 @@ def prompt_version() -> str:
     return hashlib.sha1(SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 
+def _why(exc: Exception) -> str:
+    """Име на грешката, когато самата тя е безмълвна.
+
+    httpx.ReadTimeout идва с празен текст и в лога остава "оценката се
+    провали:" — съобщение, което не казва нищо и праща човека да гадае.
+    """
+    text = str(exc).strip()
+    return text or type(exc).__name__
+
+
 class AppraisalUnavailable(RuntimeError):
     """Моделът не отговори — мрежа, ключ или лимит. Не е присъда за продукта."""
 
@@ -117,7 +127,7 @@ async def _post(url: str, *, headers: dict, payload: dict, timeout: float) -> di
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, headers=headers, json=payload)
     except httpx.HTTPError as exc:
-        raise AppraisalUnavailable(str(exc)) from exc
+        raise AppraisalUnavailable(_why(exc)) from exc
     if resp.status_code != 200:
         # Дълъг откъс: Google слага заместващия модел чак в края на текста.
         raise AppraisalUnavailable(f"HTTP {resp.status_code}: {resp.text[:600]}")
@@ -252,7 +262,7 @@ async def list_gemini_models(api_key: str) -> list[dict]:
                 params={"pageSize": 200},
             )
     except httpx.HTTPError as exc:
-        raise AppraisalUnavailable(str(exc)) from exc
+        raise AppraisalUnavailable(_why(exc)) from exc
     if resp.status_code != 200:
         raise AppraisalUnavailable(f"HTTP {resp.status_code}: {resp.text[:600]}")
 

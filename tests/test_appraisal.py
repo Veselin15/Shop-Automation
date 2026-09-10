@@ -201,3 +201,13 @@ def test_the_best_judged_item_publishes_first(tmp_path):
     db.close()
     assert order[0] == "b", "по-високо оценената трябва да излезе първа"
     assert order[-1] == "c", "неоценената чака отзад"
+
+
+def test_a_silent_timeout_still_says_something():
+    """httpx.ReadTimeout идва празен; "провали се:" не помага на никого."""
+    import httpx
+
+    from shopbot.appraise import _why
+
+    assert _why(httpx.ReadTimeout("")) == "ReadTimeout"
+    assert _why(httpx.ConnectError("няма мрежа")) == "няма мрежа"
