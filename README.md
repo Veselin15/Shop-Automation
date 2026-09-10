@@ -35,7 +35,15 @@
 категории — часовник с добра марка се продава и когато е скучен, а очилата
 се търсят само ако формата е носима.
 
-Изисква `ANTHROPIC_API_KEY` в `.env`. Проба върху един продукт:
+Доставчикът се сменя с `appraisal.provider`:
+
+| provider | цена | какво иска |
+|---|---|---|
+| `gemini` (по подразбиране) | безплатен таван | `GEMINI_API_KEY` от aistudio.google.com, без карта |
+| `ollama` | нула | инсталиран ollama на сървъра и визуален модел (`ollama pull llava`) |
+| `anthropic` | платено | `ANTHROPIC_API_KEY` |
+
+Проба върху един продукт:
 
 ```bash
 ./shopbot inspect <адрес-от-bestsecret> --category watches_men

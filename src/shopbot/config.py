@@ -116,7 +116,13 @@ class AppraisalConfig(BaseModel):
     """Оценка на самия артикул от модел, преди да стане кандидат."""
 
     enabled: bool = False
-    model: str = "claude-haiku-4-5-20251001"
+    # gemini   — безплатният таван на Google AI Studio (иска само ключ);
+    # ollama   — модел на самия сървър, без сметка и без трафик навън;
+    # anthropic — платено.
+    provider: Literal["gemini", "ollama", "anthropic"] = "gemini"
+    model: str = "gemini-2.0-flash"
+    # Само за provider: ollama.
+    ollama_url: str = "http://127.0.0.1:11434"
     # Общ праг 0..1. Артикул под него не се записва като кандидат.
     min_score: float = 0.55
     # По категории, защото рискът е различен: часовник с добра марка се
@@ -205,6 +211,7 @@ class Secrets(BaseModel):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     anthropic_api_key: str = ""
+    gemini_api_key: str = ""
 
 
 class Config(BaseModel):
@@ -224,6 +231,15 @@ class Config(BaseModel):
     secrets: Secrets = Field(default_factory=Secrets)
     selectors: dict[str, Any] = Field(default_factory=dict)
     data_dir: Path = REPO_ROOT / "data"
+
+    @property
+    def appraisal_key(self) -> str:
+        """Ключът на избрания доставчик. Ollama върви без ключ."""
+        if self.appraisal.provider == "gemini":
+            return self.secrets.gemini_api_key
+        if self.appraisal.provider == "anthropic":
+            return self.secrets.anthropic_api_key
+        return ""
 
     @property
     def db_path(self) -> Path:
@@ -272,6 +288,7 @@ def load_config(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
     )
     cfg.data_dir = Path(os.getenv("SHOPBOT_DATA_DIR", str(REPO_ROOT / "data"))).resolve()
 

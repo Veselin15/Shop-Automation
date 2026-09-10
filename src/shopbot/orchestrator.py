@@ -287,7 +287,7 @@ class Orchestrator:
             try:
                 verdict = await appraise(
                     product, price.final, price.currency, images,
-                    cfg, self.cfg.secrets.anthropic_api_key,
+                    cfg, self.cfg.appraisal_key,
                 )
             except AppraisalUnavailable as exc:
                 # Мълчаливото пускане тук значи да се плаща за обяви, които

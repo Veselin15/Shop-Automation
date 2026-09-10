@@ -577,7 +577,7 @@ def inspect(
                 try:
                     ai = await appraise(
                         product, price.final, price.currency, images,
-                        cfg.appraisal, cfg.secrets.anthropic_api_key,
+                        cfg.appraisal, cfg.appraisal_key,
                     )
                     mark = "[green]минава[/green]" if ai.score >= threshold else "[red]отпада[/red]"
                     console.print(

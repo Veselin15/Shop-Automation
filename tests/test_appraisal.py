@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from shopbot.appraise import AppraisalUnavailable, _parse
+from shopbot.appraise import AppraisalUnavailable, _parse, appraise
 from shopbot.config import AppraisalConfig, Config, load_config
 from shopbot.db import Database
 from shopbot.models import Product
@@ -90,3 +90,84 @@ def test_every_configured_threshold_belongs_to_a_real_category():
     known = {c.key for c in cfg.source.categories}
     unknown = set(cfg.appraisal.min_score_by_category) - known
     assert not unknown, f"прагове за непознати категории: {unknown}"
+
+
+# ------------------------------------------------------- доставчици
+
+
+class FakeResponse:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self.status_code = status
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+
+def capture(monkeypatch, payload, status=200):
+    """Подменя мрежата и връща какво е било изпратено."""
+    sent = {}
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            sent["url"] = url
+            sent["headers"] = headers or {}
+            sent["body"] = json
+            return FakeResponse(payload, status)
+
+    monkeypatch.setattr("shopbot.appraise.httpx.AsyncClient", FakeClient)
+    return sent
+
+
+def call(cfg, tmp_path, key=""):
+    photo = tmp_path / "a.jpg"
+    photo.write_bytes(b"fake jpeg bytes")
+    return asyncio.run(appraise(make_product(), 99.9, "EUR", [photo], cfg, key))
+
+
+def test_gemini_is_the_free_default(tmp_path, monkeypatch):
+    """По подразбиране не бива да се вика платен доставчик."""
+    cfg = AppraisalConfig(enabled=True)
+    assert cfg.provider == "gemini"
+    sent = capture(monkeypatch, {
+        "candidates": [{"content": {"parts": [{"text": '{"score": 80, "reason": "ок"}'}]}}]
+    })
+    verdict = call(cfg, tmp_path, key="free-key")
+    assert verdict.score == pytest.approx(0.80)
+    assert "generativelanguage" in sent["url"]
+    assert sent["headers"]["x-goog-api-key"] == "free-key"
+
+
+def test_ollama_needs_no_key_and_stays_local(tmp_path, monkeypatch):
+    cfg = AppraisalConfig(enabled=True, provider="ollama", model="llava")
+    sent = capture(monkeypatch, {
+        "message": {"content": '{"score": 40, "reason": "странна форма"}'}
+    })
+    verdict = call(cfg, tmp_path)
+    assert verdict.score == pytest.approx(0.40)
+    assert sent["url"].startswith("http://127.0.0.1:11434")
+    assert sent["body"]["messages"][1]["images"]
+
+
+def test_missing_key_says_which_one(tmp_path):
+    cfg = AppraisalConfig(enabled=True)
+    with pytest.raises(AppraisalUnavailable, match="GEMINI_API_KEY"):
+        call(cfg, tmp_path)
+
+
+def test_blocked_answer_is_an_error_not_a_zero(tmp_path, monkeypatch):
+    """Отрязан или блокиран отговор не бива да мине за 'никой няма да го купи'."""
+    cfg = AppraisalConfig(enabled=True)
+    capture(monkeypatch, {"candidates": []})
+    with pytest.raises(AppraisalUnavailable):
+        call(cfg, tmp_path, key="free-key")
