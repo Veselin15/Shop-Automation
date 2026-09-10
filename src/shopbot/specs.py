@@ -105,6 +105,9 @@ VALUES = {
     "logo appliqué(s)": "апликация с лого",
     "quilted": "капитониран",
     "logo": "лого",
+    "hand-wash": "ръчно пране",
+    "on both temples": "от двете страни",
+    "wristband": "каишка",
     "silver": "сребрист",
     "gold": "златист",
     "black": "черен",
@@ -141,8 +144,10 @@ def _translate_value(value: str) -> str:
     if text.lower() in VALUES:
         return VALUES[text.lower()]
 
+    # Границата е "не-буква", а не \b: изразът \bpocket\(s\)\b не съвпада с
+    # нищо, защото след затварящата скоба няма буква, до която да има граница.
     for en, bg in sorted(VALUES.items(), key=lambda kv: -len(kv[0])):
-        text = re.sub(rf"\b{re.escape(en)}\b", bg, text, flags=re.IGNORECASE)
+        text = re.sub(rf"(?<!\w){re.escape(en)}(?!\w)", bg, text, flags=re.IGNORECASE)
     for en, bg in UNITS.items():
         text = re.sub(rf"(?<=\d)\s*{en}\b", f" {bg}", text, flags=re.IGNORECASE)
     return text.strip()
@@ -180,7 +185,7 @@ def parse_specs(raw: str, limit: int = 8) -> list[tuple[str, str]]:
         value = re.split(r"(?<=[a-zа-я])\s+(?=[A-ZА-Я][a-zа-я]+\s+by)", value)[0]
         # Непознато поле също стои залепено за предната стойност ("цип
         # Extras: logo appliqué"). Не го превеждаме, но и не го влачим.
-        value = re.split(r"\s+(?=[A-Z][A-Za-z'&\- ]{2,28}:)", value)[0]
+        value = re.split(r"\s+(?=[A-Z][A-Za-z0-9'&\-/ ]{1,28}:)", value)[0]
         value = value.strip(" .,;")
         if not value or len(value) > 160:
             continue
