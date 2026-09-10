@@ -112,6 +112,25 @@ class FxConfig(BaseModel):
     eur_bgn: float = 1.95583
 
 
+class AppraisalConfig(BaseModel):
+    """Оценка на самия артикул от модел, преди да стане кандидат."""
+
+    enabled: bool = False
+    model: str = "claude-haiku-4-5-20251001"
+    # Общ праг 0..1. Артикул под него не се записва като кандидат.
+    min_score: float = 0.55
+    # По категории, защото рискът е различен: часовник с добра марка се
+    # продава и когато е скучен, а очилата се търсят само ако формата е носима.
+    min_score_by_category: dict[str, float] = Field(default_factory=dict)
+    # Таван на заявките за цикъл — всяка струва пари.
+    max_calls_per_run: int = 120
+    max_images: int = 2
+    timeout_s: float = 40.0
+    # Какво става, когато моделът не отговори: "skip" оставя артикула за
+    # следващия цикъл, "accept" го пуска с досегашните правила.
+    on_error: Literal["skip", "accept"] = "skip"
+
+
 class PricingConfig(BaseModel):
     output_currency: Literal["EUR", "BGN"] = "EUR"
     fx: FxConfig = Field(default_factory=FxConfig)
@@ -185,6 +204,7 @@ class Secrets(BaseModel):
     bazar_password: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    anthropic_api_key: str = ""
 
 
 class Config(BaseModel):
@@ -195,6 +215,7 @@ class Config(BaseModel):
     selection: SelectionConfig = Field(default_factory=SelectionConfig)
     pricing: PricingConfig = Field(default_factory=PricingConfig)
     listing: ListingConfig = Field(default_factory=ListingConfig)
+    appraisal: AppraisalConfig = Field(default_factory=AppraisalConfig)
     bazar: BazarConfig = Field(default_factory=BazarConfig)
     removal: RemovalConfig = Field(default_factory=RemovalConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
@@ -250,6 +271,7 @@ def load_config(
         bazar_password=os.getenv("BAZAR_PASSWORD", ""),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
     )
     cfg.data_dir = Path(os.getenv("SHOPBOT_DATA_DIR", str(REPO_ROOT / "data"))).resolve()
 

@@ -11,6 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from .appraise import AppraisalUnavailable, appraise
 from .browser import (
     BrowserMissing,
     BrowserSession,
@@ -22,6 +23,7 @@ from .config import load_config
 from .db import Database
 from .humanize import Pacer
 from .listing import build_listing
+from .media import download_images
 from .notify import (
     Notifier,
     TelegramRejected,
@@ -563,6 +565,27 @@ def inspect(
             if price.rejected:
                 table.add_row("цена отхвърлена", price.rejected)
             console.print(table)
+
+            if cfg.appraisal.enabled and not price.rejected:
+                images = await download_images(
+                    session.context, product.images, product.id,
+                    cfg.images_dir, cfg.appraisal.max_images,
+                )
+                threshold = cfg.appraisal.min_score_by_category.get(
+                    category, cfg.appraisal.min_score
+                )
+                try:
+                    ai = await appraise(
+                        product, price.final, price.currency, images,
+                        cfg.appraisal, cfg.secrets.anthropic_api_key,
+                    )
+                    mark = "[green]минава[/green]" if ai.score >= threshold else "[red]отпада[/red]"
+                    console.print(
+                        f"\n[bold]Оценка от модела:[/bold] {ai.score:.2f} "
+                        f"(праг {threshold:.2f}) {mark} — {ai.reason}"
+                    )
+                except AppraisalUnavailable as exc:
+                    console.print(f"\n[yellow]Оценката не мина: {exc}[/yellow]")
 
             category_id = cfg.listing.category_map.get(category, 0)
             listing = build_listing(product, price, cfg.listing, category_id)

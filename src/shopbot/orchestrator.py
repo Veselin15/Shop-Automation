@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
+from .appraise import AppraisalUnavailable, appraise
 from .browser import AuthWallError, BrowserSession, SelectorMissing
 from .config import Config
 from .db import Database
@@ -27,6 +28,8 @@ class CycleReport:
     scanned: int = 0
     opened: int = 0
     new_candidates: int = 0
+    appraised: int = 0
+    appraisal_rejects: int = 0
     published: int = 0
     removed: int = 0
     rechecked: int = 0
@@ -35,7 +38,8 @@ class CycleReport:
     def summary(self) -> str:
         return (
             f"прегледани {self.scanned} (отворени {self.opened}), "
-            f"нови кандидати {self.new_candidates}, "
+            f"нови кандидати {self.new_candidates} "
+            f"(оценени {self.appraised}, отпаднали {self.appraisal_rejects}), "
             f"публикувани {self.published}, проверени {self.rechecked}, "
             f"свалени {self.removed}, грешки {len(self.errors)}"
         )
@@ -47,6 +51,8 @@ class Orchestrator:
         self.db = db
         self.notifier = notifier
         self.pacer = Pacer(cfg.runtime)
+        # Презарежда се в началото на всяко обхождане.
+        self._appraisal_budget = cfg.appraisal.max_calls_per_run
 
     # ------------------------------------------------------------- лимити
 
@@ -120,6 +126,7 @@ class Orchestrator:
         # паметта); скъпото е отварянето на продуктова страница.
         tile_budget = self.cfg.limits.max_tiles_per_run
         fetch_budget = self.cfg.limits.max_product_pages_per_run
+        self._appraisal_budget = self.cfg.appraisal.max_calls_per_run
 
         configured = [c for c in self.cfg.source.categories if c.is_configured]
         if not configured:
@@ -244,6 +251,9 @@ class Orchestrator:
             self.db.log_event("no_images", product.url, product.id)
             return True
 
+        if not await self._appraisal_passes(product, price, images, report):
+            return True
+
         self.db.save_candidate(listing)
         report.new_candidates += 1
         log.info(
@@ -254,6 +264,50 @@ class Orchestrator:
             format_money(price.cost, price.currency),
             format_money(price.margin, price.currency),
         )
+        return True
+
+    async def _appraisal_passes(self, product, price, images, report: CycleReport) -> bool:
+        """Пуска ли моделът този артикул. Изключената оценка пуска всичко.
+
+        Снимката е решаващата част, затова оценката идва след свалянето им.
+        """
+        cfg = self.cfg.appraisal
+        if not cfg.enabled:
+            return True
+
+        threshold = cfg.min_score_by_category.get(product.category_key, cfg.min_score)
+
+        cached = self.db.get_appraisal(product.id)
+        if cached is not None:
+            verdict_score, reason = cached["score"], cached["reason"]
+        else:
+            if self._appraisal_budget <= 0:
+                log.info("оценките за цикъла свършиха, %s остава за следващия", product.id)
+                return False
+            try:
+                verdict = await appraise(
+                    product, price.final, price.currency, images,
+                    cfg, self.cfg.secrets.anthropic_api_key,
+                )
+            except AppraisalUnavailable as exc:
+                # Мълчаливото пускане тук значи да се плаща за обяви, които
+                # моделът е трябвало да отсее — затова се вижда в лога.
+                log.warning("оценката на %s се провали: %s", product.id, exc)
+                report.errors.append(f"оценка {product.id}: {exc}")
+                return cfg.on_error == "accept"
+            self._appraisal_budget -= 1
+            report.appraised += 1
+            verdict_score, reason = verdict.score, verdict.reason
+            self.db.save_appraisal(product.id, verdict.score, verdict.reason, verdict.model)
+
+        if verdict_score < threshold:
+            report.appraisal_rejects += 1
+            log.info("моделът отказва %s (%s): %.2f < %.2f — %s",
+                     product.id, product.brand, verdict_score, threshold, reason)
+            self.db.log_event("appraisal_reject", f"{verdict_score:.2f} {reason}", product.id)
+            return False
+
+        log.debug("моделът пуска %s: %.2f — %s", product.id, verdict_score, reason)
         return True
 
     async def _recheck_published(

@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS events (
     message     TEXT DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS appraisals (
+    product_id  TEXT PRIMARY KEY,
+    score       REAL DEFAULT 0,
+    reason      TEXT DEFAULT '',
+    model       TEXT DEFAULT '',
+    created_at  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS counters (
     day     TEXT NOT NULL,
     kind    TEXT NOT NULL,
@@ -255,6 +263,25 @@ class Database:
                 (cutoff, limit),
             )
         )
+
+    # ---------------- appraisals ----------------
+
+    def get_appraisal(self, product_id: str) -> sqlite3.Row | None:
+        """Оценката се плаща веднъж. Един и същ артикул се среща всеки цикъл."""
+        cur = self.conn.execute(
+            "SELECT * FROM appraisals WHERE product_id = ?", (product_id,)
+        )
+        return cur.fetchone()
+
+    def save_appraisal(self, product_id: str, score: float, reason: str, model: str) -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO appraisals (product_id, score, reason, model, created_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(product_id) DO UPDATE SET "
+                "score=excluded.score, reason=excluded.reason, model=excluded.model, "
+                "created_at=excluded.created_at",
+                (product_id, score, reason[:300], model, utcnow()),
+            )
 
     # ---------------- events & counters ----------------
 
