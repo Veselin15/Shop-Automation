@@ -293,6 +293,17 @@ class BestSecretSource:
                 }
                 return '';
               };
+              // Характеристиките стоят в отделна секция ИЗВЪН .product-details,
+              // затова се търсят в целия документ. И с innerText, не с
+              // textContent: редовете "Ключ: стойност" се четат по ред, а
+              // textContent ги слепва в едно изречение.
+              const pickText = sels => {
+                for (const s of sels || []) {
+                  const el = doc.querySelector(s);
+                  if (el && (el.innerText || '').trim()) return el.innerText.trim();
+                }
+                return '';
+              };
               const sizes = [];
               for (const s of sel.pdp_sizes || []) {
                 const nodes = doc.querySelectorAll(s);
@@ -324,7 +335,7 @@ class BestSecretSource:
                 price: pick(sel.pdp_price),
                 rrp: pick(sel.pdp_orig_price),
                 discount: pick(sel.pdp_discount),
-                description: pick(sel.pdp_description).slice(0, 1200),
+                description: pickText(sel.pdp_description).slice(0, 1500),
                 sizes, images,
               };
             }
