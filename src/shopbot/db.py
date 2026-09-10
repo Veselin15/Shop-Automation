@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS listings (
     attempts        INTEGER DEFAULT 0,
     last_error      TEXT DEFAULT '',
     published_at    TEXT,
+    publish_discount_pct INTEGER DEFAULT 0,
     removed_at      TEXT,
     removal_reason  TEXT DEFAULT ''
 );
@@ -103,6 +104,10 @@ class Database:
             self.conn.execute("ALTER TABLE appraisals ADD COLUMN prompt TEXT DEFAULT ''")
 
         columns = {r[1] for r in self.conn.execute("PRAGMA table_info(listings)")}
+        if "publish_discount_pct" not in columns:
+            self.conn.execute(
+                "ALTER TABLE listings ADD COLUMN publish_discount_pct INTEGER DEFAULT 0"
+            )
         # Категорията беше текстов път ("Мода > Аксесоари"), сега е числово id.
         if "category_label" in columns and "category_id" not in columns:
             self.conn.execute("ALTER TABLE listings DROP COLUMN category_label")
@@ -208,12 +213,19 @@ class Database:
                 ),
             )
 
-    def mark_published(self, product_id: str, bazar_id: str, bazar_url: str) -> None:
+    def mark_published(self, product_id: str, bazar_id: str, bazar_url: str,
+                       discount_pct: int = 0) -> None:
+        """Запомня и намалението в деня на публикуване.
+
+        То е базата, спрямо която после се съди дали офертата е още същата —
+        абсолютен праг не различава 90% -> 70% от 50% -> 46%.
+        """
         with self.tx() as c:
             c.execute(
                 "UPDATE listings SET state=?, bazar_id=?, bazar_url=?, published_at=?, "
-                "last_error='' WHERE product_id=?",
-                (str(ListingState.PUBLISHED), bazar_id, bazar_url, utcnow(), product_id),
+                "publish_discount_pct=?, last_error='' WHERE product_id=?",
+                (str(ListingState.PUBLISHED), bazar_id, bazar_url, utcnow(),
+                 discount_pct, product_id),
             )
 
     def mark_failed(self, product_id: str, error: str) -> None:

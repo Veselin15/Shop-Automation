@@ -383,12 +383,13 @@ class Orchestrator:
             product = self.db.get_product(row["product_id"])
             if product is None:
                 continue
-            reason = self._removal_reason(product, row["product_id"])
+            reason = self._removal_reason(product, row)
             if reason:
                 pending.append((row["product_id"], row["bazar_id"] or "", row["title"], reason))
         return pending
 
-    def _removal_reason(self, product: Product, product_id: str) -> str:
+    def _removal_reason(self, product: Product, row) -> str:
+        product_id = row["product_id"]
         if product.status == ProductStatus.GONE:
             misses = self.db.miss_count(product_id)
             if misses >= self.cfg.removal.misses_before_removal:
@@ -398,6 +399,14 @@ class Orchestrator:
             return "изчерпан е"
         if product.discount_pct < self.cfg.removal.remove_below_discount_pct:
             return f"намалението падна на {product.discount_pct}%"
+
+        # Офертата, заради която обявата изобщо е пусната. Дребно свиване
+        # (75% -> 72%) не променя сметката; голямото значи, че вече продаваме
+        # нещо друго на цената на старата оферта.
+        was = row["publish_discount_pct"] if "publish_discount_pct" in row.keys() else 0
+        drop = was - product.discount_pct
+        if was and drop > self.cfg.removal.max_discount_drop_pct:
+            return f"намалението падна от {was}% на {product.discount_pct}%"
         return ""
 
     async def _remove_listings(
@@ -491,7 +500,7 @@ class Orchestrator:
                 log.info("DRY RUN: обявата е попълнена, но не е изпратена")
                 break
 
-            self.db.mark_published(product.id, bazar_id, bazar_url)
+            self.db.mark_published(product.id, bazar_id, bazar_url, product.discount_pct)
             self.db.log_event("published", bazar_url, product.id)
             limiter.consume()
             active += 1

@@ -195,7 +195,13 @@ class BazarConfig(BaseModel):
 
 class RemovalConfig(BaseModel):
     auto_remove: bool = True
+    # Твърд под: под това намаление обявата пада, каквото и да е било в
+    # деня на публикуване.
     remove_below_discount_pct: int = 45
+    # Колко процентни пункта може да падне намалението спрямо деня на
+    # публикуване, преди обявата да свали. 75% -> 72% е поносимо, 75% -> 60%
+    # значи, че сметката вече не е същата.
+    max_discount_drop_pct: int = 5
     misses_before_removal: int = 2
 
 

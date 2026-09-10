@@ -24,7 +24,8 @@ def orch(tmp_path):
 def publish(db, product):
     db.upsert_product(product, score=0.9)
     db.save_candidate(Listing(product_id=product.id, title=f"{product.brand} {product.name}"))
-    db.mark_published(product.id, f"ad{product.id}", f"https://bazar.bg/obiava-{product.id}")
+    db.mark_published(product.id, f"ad{product.id}",
+                      f"https://bazar.bg/obiava-{product.id}", product.discount_pct)
 
 
 def make(pid="111", price=50.0, orig=200.0, status=ProductStatus.AVAILABLE):
@@ -121,3 +122,34 @@ def test_daily_counters_are_per_kind(orch):
     db.bump_counter("remove", 1)
     assert db.counter("publish") == 3
     assert db.counter("remove") == 1
+
+
+# --------------------------------------------- офертата още ли е същата
+
+
+def test_small_shrink_in_the_discount_keeps_the_listing(orch):
+    """75% -> 72% не променя сметката и не бива да сваля обявата."""
+    o, db, _ = orch
+    publish(db, make(price=50.0, orig=200.0))          # 75%
+    db.upsert_product(make(price=56.0, orig=200.0))    # 72%
+    assert o._pending_removals() == []
+
+
+def test_a_real_collapse_takes_it_down(orch):
+    """75% -> 60% значи, че продаваме друго на цената на старата оферта."""
+    o, db, cfg = orch
+    publish(db, make(price=50.0, orig=200.0))          # 75%
+    db.upsert_product(make(price=80.0, orig=200.0))    # 60%
+    pending = o._pending_removals()
+    assert len(pending) == 1
+    assert "75%" in pending[0][3] and "60%" in pending[0][3]
+
+
+def test_the_tolerance_is_configurable(orch):
+    o, db, cfg = orch
+    publish(db, make(price=50.0, orig=200.0))          # 75%
+    db.upsert_product(make(price=64.0, orig=200.0))    # 68%, спад 7 пункта
+    cfg.removal.max_discount_drop_pct = 10
+    assert o._pending_removals() == []
+    cfg.removal.max_discount_drop_pct = 5
+    assert len(o._pending_removals()) == 1
