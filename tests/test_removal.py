@@ -267,6 +267,23 @@ def test_the_lock_check_tells_live_from_dead():
     assert _pid_alive(999999) is False
 
 
+def test_the_session_file_never_overwrites_a_rotated_cookie():
+    """Bazar.bg сменя `pl` при всяко подновяване; старата от файла изхвърля бота."""
+    from shopbot.browser import superseded
+
+    def cookie(name, expires):
+        return {"name": name, "domain": ".bazar.bg", "path": "/", "expires": expires}
+
+    old_pl, rotated_pl = cookie("pl", 1_797_000_000), cookie("pl", 1_797_008_000)
+    jwt = cookie("jwt", -1)
+
+    assert superseded(old_pl, rotated_pl) is True       # профилът е по-нов
+    assert superseded(rotated_pl, old_pl) is False      # пренесен нов вход влиза
+    assert superseded(old_pl, None) is False            # празен профил
+    assert superseded(jwt, None) is False               # сесийната се губи при затваряне
+    assert superseded(jwt, cookie("jwt", -1)) is True
+
+
 def test_the_lock_check_never_signals_on_windows(monkeypatch):
     """Под Windows os.kill(pid, 0) праща Ctrl+C, а всичко друго убива процеса."""
     import os

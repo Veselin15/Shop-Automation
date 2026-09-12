@@ -119,14 +119,24 @@ class BrowserSession:
         return self.context
 
     async def seed_cookies(self, source: Path) -> int:
-        """Влива само бисквитките от изнесена сесия. Без навигация, евтино е."""
+        """Влива бисквитките от изнесена сесия, без да затрие по-нови. Без навигация, евтино е.
+
+        Файлът е снимка от момента на входа, а профилът живее и след това.
+        Bazar.bg пуска `jwt` за 24 минути и при всяко подновяване сменя и
+        трайната `pl`. Старата `pl` от файла, наляна върху новата, изхвърляше
+        бота на втория цикъл след всеки внос — затова профилът печели, щом
+        държи същата бисквитка с не по-ранен срок.
+        """
         assert self.context, "сесията не е стартирана"
         state = json.loads(source.read_text(encoding="utf-8"))
-        cookies = state.get("cookies", [])
-        if cookies:
-            await self.context.add_cookies(cookies)
-            log.info("вляти %d бисквитки от %s", len(cookies), source.name)
-        return len(cookies)
+        current = {_cookie_key(c): c for c in await self.context.cookies()}
+        seed = state.get("cookies", [])
+        fresh = [c for c in seed if not superseded(c, current.get(_cookie_key(c)))]
+        if fresh:
+            await self.context.add_cookies(fresh)
+        log.info("вляти %d от %d бисквитки от %s (останалите са по-нови в профила)",
+                 len(fresh), len(seed), source.name)
+        return len(fresh)
 
     def _claim_profile(self) -> None:
         """Заключва профила за този процес или отказва да тръгне."""
@@ -219,6 +229,19 @@ class BrowserSession:
             await page.close()
 
         return len(cookies), len(origins)
+
+
+def _cookie_key(cookie: dict) -> tuple[str, str, str]:
+    return cookie["name"], cookie["domain"], cookie.get("path", "/")
+
+
+def superseded(seed: dict, current: dict | None) -> bool:
+    """Държи ли профилът същата бисквитка с не по-ранен срок.
+
+    Сесийните бисквитки са със срок -1, така че от файла влиза само такава,
+    каквато профилът изобщо няма.
+    """
+    return current is not None and current.get("expires", -1) >= seed.get("expires", -1)
 
 
 def _pid_alive(pid: int) -> bool:
