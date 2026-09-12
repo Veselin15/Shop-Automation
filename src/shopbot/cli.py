@@ -32,7 +32,7 @@ from .notify import (
     check_token,
     discover_chats,
 )
-from .orchestrator import Orchestrator
+from .orchestrator import Orchestrator, publish_queue
 from .pricing import compute_price, format_money
 from .selection import evaluate
 from .sinks.bazar import JS_FIELD_HELPERS, BazarSink
@@ -370,7 +370,7 @@ def candidates(limit: int = typer.Option(30, "--limit")) -> None:
     пипа Bazar.bg.
     """
     cfg, db, _ = _ctx()
-    rows = db.pending_candidates(limit)
+    rows = publish_queue(db, cfg, limit)
     if not rows:
         console.print(
             "Опашката е празна. Напълни я с [bold]shopbot once --no-publish[/bold]."
@@ -523,7 +523,9 @@ def calibrate(
 @app.command()
 def inspect(
     url: str = typer.Argument(..., help="адрес на продукт в BestSecret"),
-    category: str = typer.Option("sunglasses", "--category", help="ключ от source.categories"),
+    category: str = typer.Option(
+        "sunglasses_women", "--category", help="ключ от source.categories"
+    ),
     verbose: bool = typer.Option(True, "--verbose", "-v"),
 ) -> None:
     """Прочита един продукт и показва решението: минава ли, на каква цена."""

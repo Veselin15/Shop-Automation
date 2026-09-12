@@ -88,6 +88,11 @@ class SourceConfig(BaseModel):
     sort_query: str = ""
     max_pages_per_category: int = 3
 
+    @property
+    def weights(self) -> dict[str, float]:
+        """Тежест по категория: дели отварянията и реди опашката за публикуване."""
+        return {c.key: c.weight for c in self.categories}
+
 
 class PopularityConfig(BaseModel):
     min_score: float = 0.45

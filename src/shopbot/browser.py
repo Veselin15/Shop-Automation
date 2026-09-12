@@ -147,11 +147,7 @@ class BrowserSession:
             return None
         if pid == os.getpid():
             return None
-        try:
-            os.kill(pid, 0)          # само проверка, не праща сигнал
-        except (OSError, ProcessLookupError):
-            return None              # процесът е мъртъв, ключалката е стара
-        return pid
+        return pid if _pid_alive(pid) else None  # мъртъв процес = стара ключалка
 
     @property
     def _lock_path(self) -> Path:
@@ -223,6 +219,45 @@ class BrowserSession:
             await page.close()
 
         return len(cookies), len(origins)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Жив ли е процесът — без да му се праща нищо.
+
+    Под Windows os.kill(pid, 0) не е проверка: 0 е CTRL_C_EVENT, а всеки друг
+    сигнал убива процеса през TerminateProcess. PID от стара ключалка вече
+    може да е на съвсем чужда програма, затова там се пита ядрото.
+    """
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        process_query_limited_information = 0x1000
+        still_active = 259
+
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return False
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True              # жив е, просто е на друг потребител
+    except OSError:
+        return False
+    return True
 
 
 @asynccontextmanager

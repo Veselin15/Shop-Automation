@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import html
 import logging
 
 import httpx
 
 log = logging.getLogger(__name__)
+
+
+def _e(text: str) -> str:
+    """Екранира за parse_mode=HTML.
+
+    "Dolce & Gabbana" или "0.35 < 0.45" без екраниране карат Telegram да
+    откаже цялото съобщение ("can't parse entities") и известието не идва.
+    """
+    return html.escape(text or "", quote=True)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 TELEGRAM_UPDATES = "https://api.telegram.org/bot{token}/getUpdates"
@@ -105,12 +115,12 @@ class Notifier:
         Поръчката се прави ръчно в BestSecret, затова адресът там трябва да е
         под ръка още в известието, а не да се търси после по име.
         """
-        lines = ["🟢 Публикувано", f"<b>{title}</b>", price]
+        lines = ["🟢 Публикувано", f"<b>{_e(title)}</b>", _e(price)]
         if cost:
-            lines.append(f"себестойност {cost}")
-        lines.append(url)
+            lines.append(f"себестойност {_e(cost)}")
+        lines.append(_e(url))
         if source_url:
-            lines.append(f'<a href="{source_url}">➡️ Отвори в BestSecret</a>')
+            lines.append(f'<a href="{_e(source_url)}">➡️ Отвори в BestSecret</a>')
         await self.send("\n".join(lines))
 
     async def removed(self, title: str, reason: str, url: str = "") -> None:
@@ -119,9 +129,9 @@ class Notifier:
         Самата страница вече не се отваря — Bazar.bg пренасочва изтритите —
         но номерът в адреса е достатъчен, за да се намери обявата в профила.
         """
-        lines = ["🔴 Свалено", f"<b>{title}</b>", f"Причина: {reason}"]
+        lines = ["🔴 Свалено", f"<b>{_e(title)}</b>", f"Причина: {_e(reason)}"]
         if url:
-            lines.append(url)
+            lines.append(_e(url))
         await self.send("\n".join(lines))
 
     async def auth_wall(self, site: str) -> None:
@@ -132,4 +142,4 @@ class Notifier:
         )
 
     async def error(self, context: str, message: str) -> None:
-        await self.send(f"⚠️ Грешка в {context}\n<code>{message[:600]}</code>")
+        await self.send(f"⚠️ Грешка в {_e(context)}\n<code>{_e(message[:600])}</code>")

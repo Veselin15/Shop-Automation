@@ -203,6 +203,74 @@ def test_the_best_judged_item_publishes_first(tmp_path):
     assert order[-1] == "c", "неоценената чака отзад"
 
 
+class RecordingSource:
+    """Връща готова чернова и помни кои страници са отворени."""
+
+    def __init__(self, product):
+        self.product = product
+        self.opened: list[str] = []
+
+    def product_from_card(self, hit, category_key):
+        return self.product
+
+    async def fetch_product(self, url, category_key, page, hit=None):
+        """Страницата не се чете — за теста стига, че е отворена."""
+        self.opened.append(url)
+
+
+def consider(orch, product):
+    from shopbot.sources.bestsecret import CardHit
+
+    o, _, cfg = orch
+    cfg.selection.popularity.min_score = 0.0
+    source = RecordingSource(product)
+    hit = CardHit(url=product.url, rank=0)
+    opened = asyncio.run(o._consider(source, None, None, hit, product.category_key,
+                                     CycleReport()))
+    return opened, source.opened
+
+
+def test_a_rejected_item_is_not_opened_again(orch):
+    """Иначе отхвърлените в началото на листинга изяждат квотата всеки цикъл."""
+    _, db, _ = orch
+    product = make_product(pid="rej", category="watches_men")
+    db.save_appraisal(product.id, 0.20, "непозната марка", "test", prompt_version())
+
+    opened, pages = consider(orch, product)
+    assert opened is False
+    assert pages == []
+
+
+def test_an_item_that_passed_is_still_opened(orch):
+    """Кешът спестява само присъдата "не" — одобреното пак се чете наново."""
+    _, db, _ = orch
+    product = make_product(pid="ok", category="watches_men")
+    db.save_appraisal(product.id, 0.50, "класически", "test", prompt_version())
+
+    opened, pages = consider(orch, product)
+    assert opened is True
+    assert pages == [product.url]
+
+
+def test_a_removed_or_exhausted_listing_is_not_opened_again(orch):
+    """И двете никога не стигат пак до Bazar.bg — отварянето им само яде квотата."""
+    from shopbot.models import Listing
+
+    _, db, _ = orch
+    removed = make_product(pid="gone", category="watches_men")
+    exhausted = make_product(pid="tired", category="watches_men")
+    for product in (removed, exhausted):
+        db.upsert_product(product)
+        db.save_candidate(Listing(product_id=product.id, title=product.name))
+    db.mark_removed(removed.id, "изчерпан е")
+    for _ in range(3):
+        db.mark_failed(exhausted.id, "грешка")
+
+    for product in (removed, exhausted):
+        opened, pages = consider(orch, product)
+        assert (opened, pages) == (False, []), product.id
+
+
 def test_a_silent_timeout_still_says_something():
     """httpx.ReadTimeout идва празен; "провали се:" не помага на никого."""
     import httpx

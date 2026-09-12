@@ -16,6 +16,7 @@ SOURCE_MENTIONS = re.compile(
 )
 WHITESPACE = re.compile(r"[ \t]+")
 BLANK_LINES = re.compile(r"\n{3,}")
+PUNCTUATION = re.compile(r"[^\w\s]")
 
 
 def clean_source_text(text: str) -> str:
@@ -40,11 +41,13 @@ def detect_color(text: str, cfg: ListingConfig) -> str:
     Търси се най-дългата съвпаднала дума, за да бие "navy blue" над "blue",
     а "dark green" над "red" в "dark green with red trim".
     """
-    haystack = f" {text.lower()} "
+    # Препинанието става интервал: "Colour: brown." и "(brown)" също са кафяво,
+    # а не резервното черно.
+    haystack = f" {PUNCTUATION.sub(' ', text.lower())} "
     hits = [
         (len(word), option)
         for word, option in cfg.color_map.items()
-        if word and f" {word.lower()} " in haystack
+        if word and f" {PUNCTUATION.sub(' ', word.lower())} " in haystack
     ]
     return max(hits)[1] if hits else ""
 

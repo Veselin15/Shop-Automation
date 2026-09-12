@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from collections import deque
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .config import SelectionConfig
@@ -44,8 +47,16 @@ def brand_tier(brand: str, tiers: dict[str, float], default: float = 0.35) -> fl
     if needle in lowered:
         return lowered[needle]
 
-    matches = [v for k, v in lowered.items() if k and (k in needle or needle in k)]
+    matches = [
+        v for k, v in lowered.items()
+        if k and (_has_phrase(needle, k) or _has_phrase(k, needle))
+    ]
     return max(matches) if matches else default
+
+
+def _has_phrase(text: str, phrase: str) -> bool:
+    """Цяла дума или фраза: "Etro" не бива да хване "Retrosuperfuture"."""
+    return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text) is not None
 
 
 def popularity_score(product: Product, cfg: SelectionConfig) -> float:
@@ -63,6 +74,43 @@ def popularity_score(product: Product, cfg: SelectionConfig) -> float:
     if total_weight <= 0:
         return 0.0
     return sum(parts[k] * w.get(k, 0.0) for k in parts) / total_weight
+
+
+def fair_order(
+    rows: Sequence[Mapping],
+    weights: Mapping[str, float],
+    recent: Mapping[str, int],
+    limit: int | None = None,
+) -> list:
+    """Редът на публикуване: по-тежката категория води, но никоя не гладува.
+
+    Всяка категория има дял от обявите според `weight`. На ход е тази, която
+    е най-назад спрямо дела си — като се брои и излязлото наскоро (`recent`),
+    не само този цикъл. Без тази памет всеки цикъл от 7 обяви започва на
+    чисто, първите места отиват винаги на едни и същи категории и очилата
+    не излизат никога.
+
+    Вътре в категорията редът е този на `rows` — най-добре оцененото първо.
+    """
+    queues: dict[str, deque] = {}
+    for row in rows:
+        queues.setdefault(row["category_key"], deque()).append(row)
+    served = {key: recent.get(key, 0) for key in queues}
+
+    def urgency(key: str) -> tuple:
+        weight = max(weights.get(key, 1.0), 1e-6)
+        # Кой е най-назад; при равенство — по-тежката категория, после
+        # по-добре оцененият артикул начело на опашката ѝ.
+        return ((served[key] + 1) / weight, -weight, -queues[key][0]["appraisal"])
+
+    order = []
+    while queues and (limit is None or len(order) < limit):
+        key = min(queues, key=urgency)
+        order.append(queues[key].popleft())
+        served[key] += 1
+        if not queues[key]:
+            del queues[key]
+    return order
 
 
 def evaluate(product: Product, cfg: SelectionConfig) -> Verdict:

@@ -256,3 +256,46 @@ def test_a_stale_lock_does_not_block_forever(tmp_path):
     s = BrowserSession("bestsecret", profile, headless=True)
     s._claim_profile()          # не хвърля
     assert (profile / ".shopbot.lock").read_text().strip() == str(__import__("os").getpid())
+
+
+def test_the_lock_check_tells_live_from_dead():
+    import os
+
+    from shopbot.browser import _pid_alive
+
+    assert _pid_alive(os.getppid()) is True
+    assert _pid_alive(999999) is False
+
+
+def test_the_lock_check_never_signals_on_windows(monkeypatch):
+    """Под Windows os.kill(pid, 0) праща Ctrl+C, а всичко друго убива процеса."""
+    import os
+
+    import pytest
+
+    from shopbot.browser import _pid_alive
+
+    if os.name != "nt":
+        pytest.skip("само под Windows")
+
+    def forbidden(*args):
+        raise AssertionError("os.kill не е проверка под Windows")
+
+    monkeypatch.setattr(os, "kill", forbidden)
+    assert _pid_alive(os.getppid()) is True
+
+
+def test_a_title_with_an_ampersand_still_reaches_telegram():
+    """„Dolce & Gabbana“ в HTML режим кара Telegram да откаже цялото съобщение."""
+    import asyncio
+
+    sent: list[str] = []
+    n = Notifier()
+    n.send = lambda text: sent.append(text) or asyncio.sleep(0)
+
+    asyncio.run(n.published(
+        "Шал Dolce & Gabbana <Logo>", "59.90 €", "https://bazar.bg/obiava-1",
+        source_url="https://www.bestsecret.com/product.htm?code=1&colorCode=2",
+    ))
+    assert "Dolce &amp; Gabbana &lt;Logo&gt;" in sent[0]
+    assert 'href="https://www.bestsecret.com/product.htm?code=1&amp;colorCode=2"' in sent[0]

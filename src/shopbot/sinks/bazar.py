@@ -47,6 +47,8 @@ SITE = "bazar"
 LOGIN_PATH = "/user/login"
 
 CYRILLIC = re.compile(r"[\u0400-\u04FF]")
+# "\u041C\u043E\u043B\u044F, \u043F\u043E\u0432\u044A\u0440\u0434\u0435\u0442\u0435 \u0447\u0435 \u043D\u0435 \u0441\u0442\u0435 \u0440\u043E\u0431\u043E\u0442." \u2014 \u0442\u043E\u0447\u043D\u043E \u0442\u0430\u043A\u0430, \u0441 \u0433\u0440\u0435\u0448\u043A\u0430\u0442\u0430 \u043D\u0430 \u0441\u0430\u0439\u0442\u0430.
+ROBOT_CHECK = re.compile(r"\u0440\u043E\u0431\u043E\u0442|captcha", re.IGNORECASE)
 
 # Bazar.bg не е последователен къде държи етикета на едно поле, затова
 # и инспекторът, и попълването ползват едни и същи помощни функции.
@@ -89,6 +91,10 @@ MANUAL_LOGIN_HINT = (
 
 class PublishError(RuntimeError):
     pass
+
+
+class CaptchaWall(PublishError):
+    """Bazar.bg пита „не сте робот“. Стената е пред профила, не пред обявата."""
 
 
 class BazarSink:
@@ -295,6 +301,8 @@ class BazarSink:
             if empty:
                 parts.append(f"незапълнени полета: {empty}")
             parts.append(f"снимка: {shot}")
+            if ROBOT_CHECK.search(error_text):
+                raise CaptchaWall("; ".join(parts))
             raise PublishError("; ".join(parts))
 
         log.info("Bazar.bg: публикувана обява %s -> %s", ad_id, ad_url)

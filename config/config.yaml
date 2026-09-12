@@ -37,7 +37,10 @@ limits:
   # Отваряния на продуктова страница — това е скъпото и бавното. Бюджетът се
   # дели поравно между категориите, така че 120 значи по 10 на категория.
   max_product_pages_per_run: 120
-  max_active_listings: 60
+  # Предпазител, не цел: обявите не струват нищо, стоката се купува след
+  # поръчка. При 60 опашката запушваше и часовниците чакаха да паднат чанти.
+  # Темпото го пазят дневният лимит и лимитът на цикъл горе.
+  max_active_listings: 100
 
 # ------------------------------------------------------------
 #  ОТКЪДЕ ЧЕТЕ
@@ -61,18 +64,20 @@ source:
   # Други филтри (марки, цена) се добавят по същия начин: слагаш ги в сайта и
   # копираш адресната лента. Ботът слива query параметрите правилно, така че
   # страницирането не чупи филтъра.
-  # `weight` дели бюджета от отваряния. Тежестите долу залагат на часовниците
-  # и портфейлите; очилата и шаловете остават, но само колкото да не се
-  # изпуснат добрите бройки.
+  # `weight` е делът на категорията — и от отварянията при търсене, и от
+  # публикуваните обяви. Часовник с 3.0 излиза три пъти по-често от мъжка
+  # чанта с 1.0, но и очилата с 0.8 получават своите места: опашката помни
+  # какво е излязло през последния ден и дава хода на категорията, която е
+  # най-назад спрямо дела си. Вътре в категорията първо е най-добре оцененото.
   categories:
     - key: sunglasses_women
       label: "Слънчеви очила (дамски)"
       url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_sonnenbrillen&filterParam_relativeSavingRanges=70.0-*"
-      weight: 0.4
+      weight: 0.8
     - key: sunglasses_men
       label: "Слънчеви очила (мъжки)"
       url: "https://www.bestsecret.com/category.htm?area=MEN_ACCESSORIES&category=men_accessoires_sonnenbrillen&gender=MALE&filterParam_relativeSavingRanges=70.0-*"
-      weight: 0.4
+      weight: 0.8
     - key: watches_women
       label: "Часовници (дамски)"
       url: "https://www.bestsecret.com/category.htm?area=WOMEN_ACCESSORIES&category=women_accessoires_uhren&filterParam_relativeSavingRanges=70.0-*"
@@ -229,7 +234,6 @@ selection:
       "Aigner": 0.75
       "Nina Ricci": 0.75
       "Coccinelle": 0.75
-      "Furla": 1.0
       "Plein Sport": 0.70
       "Liebeskind": 0.70
       "Ba&sh": 0.70

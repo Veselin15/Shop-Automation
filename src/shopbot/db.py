@@ -85,6 +85,10 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 """
 
 
+# Опити за публикуване на една обява, преди да се откажем от нея.
+MAX_PUBLISH_ATTEMPTS = 3
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = path
@@ -169,10 +173,19 @@ class Database:
             )
 
     def update_prices(self, product_id: str, price: float, orig_price: float) -> None:
+        """Непрочетената каталожна цена (0) не изтрива записаната.
+
+        При проверка няма плочка, от която да се вземе резервна стойност, а
+        нула тук значи намаление 0% и сваляне на обява, която е наред. Ако
+        продуктът наистина е на пълна цена, цената се изравнява с каталожната
+        и намалението пак излиза 0.
+        """
         with self.tx() as c:
             c.execute(
-                "UPDATE products SET price=?, orig_price=?, last_seen=? WHERE id=?",
-                (price, orig_price, utcnow(), product_id),
+                "UPDATE products SET price=?, "
+                "orig_price = CASE WHEN ? > 0 THEN ? ELSE orig_price END, "
+                "last_seen=? WHERE id=?",
+                (price, orig_price, orig_price, utcnow(), product_id),
             )
 
     def get_product(self, product_id: str) -> Product | None:
@@ -243,27 +256,53 @@ class Database:
                 (str(ListingState.REMOVED), utcnow(), reason, product_id),
             )
 
-    def pending_candidates(self, limit: int) -> list[sqlite3.Row]:
-        """Първо излиза това, което моделът е оценил най-високо.
+    def pending_candidates(self, limit: int | None = None) -> list[sqlite3.Row]:
+        """Кандидатите, най-добре оцененото първо.
 
         Скорът за популярност мери марка и намаление и качва всяка позната
-        марка нагоре; оценката гледа самия артикул. При няколко публикувани
-        на цикъл редът решава кое изобщо ще излезе, затова води оценката, а
+        марка нагоре; оценката гледа самия артикул. Затова води оценката, а
         старият скор остава само за да пререди равните.
+
+        Това е редът вътре в категорията. Кое от категориите излиза решава
+        `selection.fair_order` — само по оценка чантите с 0.75 винаги
+        изпреварват часовниците с 0.55.
         """
-        return list(
+        rows = list(
             self.conn.execute(
                 """
-                SELECT l.*, p.score AS score, COALESCE(a.score, -1) AS appraisal
+                SELECT l.*, p.score AS score, p.category_key AS category_key,
+                       COALESCE(a.score, -1) AS appraisal
                 FROM listings l
                 JOIN products p ON p.id = l.product_id
                 LEFT JOIN appraisals a ON a.product_id = l.product_id
-                WHERE l.state IN ('candidate','failed') AND l.attempts < 3
-                ORDER BY appraisal DESC, p.score DESC, p.first_seen ASC LIMIT ?
+                WHERE l.state IN ('candidate','failed') AND l.attempts < ?
+                ORDER BY appraisal DESC, p.score DESC, p.first_seen ASC
                 """,
-                (limit,),
+                (MAX_PUBLISH_ATTEMPTS,),
             )
         )
+        return rows if limit is None else rows[:limit]
+
+    def recent_publish_counts(self, window: int) -> dict[str, int]:
+        """По категория: колко от последните `window` публикувани обяви са нейни.
+
+        Свалените също се броят — мястото си в реда са го заели, когато са
+        излезли.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT p.category_key, COUNT(*)
+            FROM (
+                SELECT product_id FROM listings
+                WHERE published_at IS NOT NULL
+                ORDER BY published_at DESC LIMIT ?
+            ) recent
+            JOIN products p ON p.id = recent.product_id
+            GROUP BY p.category_key
+            """,
+            (window,),
+        )
+        return {key: count for key, count in rows}
 
     def active_listings(self) -> list[sqlite3.Row]:
         return list(self.conn.execute("SELECT * FROM listings WHERE state='published'"))

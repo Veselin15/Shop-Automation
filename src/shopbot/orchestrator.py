@@ -9,15 +9,15 @@ from dataclasses import dataclass, field
 from .appraise import AppraisalUnavailable, appraise, prompt_version
 from .browser import AuthWallError, BrowserSession, SelectorMissing
 from .config import Config
-from .db import Database
+from .db import MAX_PUBLISH_ATTEMPTS, Database
 from .humanize import DailyLimiter, Pacer
 from .listing import build_listing
 from .media import download_images
 from .models import Product, ProductStatus
 from .notify import Notifier
 from .pricing import compute_price, format_money
-from .selection import evaluate
-from .sinks.bazar import BazarSink, PublishError
+from .selection import evaluate, fair_order
+from .sinks.bazar import BazarSink, CaptchaWall, PublishError
 from .sources.bestsecret import BestSecretSource, CardHit
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,20 @@ class CycleReport:
         )
 
 
+def publish_queue(db: Database, cfg: Config, limit: int) -> list:
+    """Кандидатите в реда, в който ще излизат. Същият ред вижда и `shopbot candidates`.
+
+    Паметта е колкото един ден обяви. По-дълга кара категория, която е
+    липсвала седмица, да изземе всички места наведнъж, щом се появи.
+    """
+    return fair_order(
+        db.pending_candidates(),
+        cfg.source.weights,
+        db.recent_publish_counts(cfg.limits.max_publish_per_day),
+        limit,
+    )
+
+
 class Orchestrator:
     def __init__(self, cfg: Config, db: Database, notifier: Notifier) -> None:
         self.cfg = cfg
@@ -53,6 +67,8 @@ class Orchestrator:
         self.pacer = Pacer(cfg.runtime)
         # Презарежда се в началото на всяко обхождане.
         self._appraisal_budget = cfg.appraisal.max_calls_per_run
+        # Сайтове, за които вече е пратено известие "иска ръчен вход".
+        self._walled: set[str] = set()
 
     # ------------------------------------------------------------- лимити
 
@@ -76,24 +92,34 @@ class Orchestrator:
         if discover or reconcile:
             try:
                 await self._source_phase(report, discover, reconcile)
+                self._walled.discard("bestsecret")
             except AuthWallError as exc:
-                report.errors.append(str(exc))
-                if self.cfg.notifications.on_auth_wall:
-                    await self.notifier.auth_wall("bestsecret")
-                self.db.log_event("auth_wall", str(exc))
+                await self._auth_wall("bestsecret", exc, report)
 
         if publish or reconcile:
             try:
-                await self._sink_phase(report, publish, reconcile, dry_run)
+                if await self._sink_phase(report, publish, reconcile, dry_run):
+                    self._walled.discard("bazar")
             except AuthWallError as exc:
-                report.errors.append(str(exc))
-                if self.cfg.notifications.on_auth_wall:
-                    await self.notifier.auth_wall("bazar")
-                self.db.log_event("auth_wall", str(exc))
+                await self._auth_wall("bazar", exc, report)
 
         self.db.log_event("cycle", report.summary())
         log.info("Цикълът приключи: %s", report.summary())
         return report
+
+    async def _auth_wall(self, site: str, exc: AuthWallError, report: CycleReport) -> None:
+        """Едно известие на прекъсване, не по едно на всеки цикъл.
+
+        Докато човекът не влезе, стената се удря на всеки 90 минути; четири
+        еднакви съобщения подред заравят това, което наистина трябва да се види.
+        """
+        report.errors.append(str(exc))
+        self.db.log_event("auth_wall", str(exc))
+        if site in self._walled:
+            return
+        self._walled.add(site)
+        if self.cfg.notifications.on_auth_wall:
+            await self.notifier.auth_wall(site)
 
     # --------------------------------------------------------- фаза източник
 
@@ -212,8 +238,21 @@ class Orchestrator:
                       draft.id, draft.brand, draft_verdict.reason)
             return False
 
+        # Свалената обява не се вдига наново (save_candidate не пипа removed),
+        # а изчерпалата опитите си не се публикува пак — отварянето на
+        # страницата им само яде квотата и брои фалшив "нов кандидат".
         existing = self.db.get_listing(draft.id)
-        if existing is not None and existing["state"] in ("published", "candidate"):
+        if existing is not None and (
+            existing["state"] in ("published", "candidate", "removed")
+            or (existing["state"] == "failed" and existing["attempts"] >= MAX_PUBLISH_ATTEMPTS)
+        ):
+            return False
+
+        # Моделът вече е казал "не" по същите правила — страницата не се
+        # отваря пак. Без това отхвърлените часовници в началото на листинга
+        # изяждаха квотата на категорията всеки цикъл и ботът не стигаше до
+        # нито един нов часовник по-надолу.
+        if self._judged_unsellable(draft):
             return False
 
         product = await source.fetch_product(hit.url, category_key, page, hit)
@@ -270,6 +309,18 @@ class Orchestrator:
         )
         return True
 
+    def _appraisal_threshold(self, category_key: str) -> float:
+        cfg = self.cfg.appraisal
+        return cfg.min_score_by_category.get(category_key, cfg.min_score)
+
+    def _judged_unsellable(self, product: Product) -> bool:
+        """Има ли оценка под прага — по текущите правила и текущия праг."""
+        if not self.cfg.appraisal.enabled:
+            return False
+        cached = self.db.get_appraisal(product.id, prompt_version())
+        return (cached is not None
+                and cached["score"] < self._appraisal_threshold(product.category_key))
+
     async def _appraisal_passes(self, product, price, images, report: CycleReport) -> bool:
         """Пуска ли моделът този артикул. Изключената оценка пуска всичко.
 
@@ -279,7 +330,7 @@ class Orchestrator:
         if not cfg.enabled:
             return True
 
-        threshold = cfg.min_score_by_category.get(product.category_key, cfg.min_score)
+        threshold = self._appraisal_threshold(product.category_key)
 
         cached = self.db.get_appraisal(product.id, prompt_version())
         if cached is not None:
@@ -336,6 +387,14 @@ class Orchestrator:
                 log.warning("проверката на %s се провали: %s", product_id, exc)
                 continue
 
+            if product is not None and product.price <= 0:
+                # Името се е прочело, цената — не. Това е неуспешно четене, а
+                # не присъда: нула тук сваля обявата с "намалението падна на 0%".
+                log.warning("проверката на %s не прочете цена, оставям я за после",
+                            product_id)
+                await self.pacer.pause(factor=0.3)
+                continue
+
             report.rechecked += 1
             if product is None:
                 self.db.mark_checked(product_id, ProductStatus.GONE, miss=True)
@@ -348,13 +407,24 @@ class Orchestrator:
 
     async def _sink_phase(
         self, report: CycleReport, publish: bool, reconcile: bool, dry_run: bool
-    ) -> None:
+    ) -> bool:
+        """Връща дали е влязъл в Bazar.bg."""
         removals = self._pending_removals() if reconcile else []
-        candidates = self.db.pending_candidates(self.cfg.limits.max_publish_per_run) if publish else []
+        # При изчерпан дневен лимит или пълен таван няма какво да се публикува.
+        # Без тази проверка ботът пак влизаше в профила на всеки цикъл само за
+        # да установи това — вход без никакво действие изглежда като бот.
+        has_room = (
+            self._publish_limiter().allow()
+            and self.db.active_listing_count() < self.cfg.limits.max_active_listings
+        )
+        candidates = (
+            publish_queue(self.db, self.cfg, self.cfg.limits.max_publish_per_run)
+            if publish and has_room else []
+        )
 
         if not removals and not candidates:
             log.info("Bazar.bg: няма работа този цикъл")
-            return
+            return False
 
         session = BrowserSession(
             "bazar", self.cfg.profiles_dir / "bazar", self.cfg.runtime.headless,
@@ -370,6 +440,7 @@ class Orchestrator:
                 await self._remove_listings(sink, page, removals, report, dry_run)
             if candidates:
                 await self._publish_candidates(sink, page, candidates, report, dry_run)
+            return True
         finally:
             await session.stop()
 
@@ -378,7 +449,7 @@ class Orchestrator:
         if not self.cfg.removal.auto_remove:
             return []
 
-        pending: list[tuple[str, str, str, str]] = []
+        pending: list[tuple[str, str, str, str, str]] = []
         for row in self.db.active_listings():
             product = self.db.get_product(row["product_id"])
             if product is None:
@@ -493,6 +564,20 @@ class Orchestrator:
                 bazar_id, bazar_url = await sink.publish(listing, list(images), page, dry_run)
             except AuthWallError:
                 raise
+            except CaptchaWall as exc:
+                # Проверката е пред профила, не пред обявата: всеки следващ
+                # кандидат удря същата стена и изгаря по опит, докато след три
+                # цикъла добрите обяви не умрат завинаги. Спираме без опити.
+                log.warning("Bazar.bg иска проверка „не сте робот“, спирам: %s", exc)
+                report.errors.append(str(exc))
+                self.db.log_event("captcha", str(exc), product.id)
+                if self.cfg.notifications.on_error:
+                    await self.notifier.error(
+                        "публикуване",
+                        "Bazar.bg поиска проверка „не сте робот“ — публикуването "
+                        "спира до следващия цикъл, кандидатите не губят опит.",
+                    )
+                break
             except (PublishError, SelectorMissing) as exc:
                 log.warning("публикуването на %s се провали: %s", product.id, exc)
                 self.db.mark_failed(product.id, str(exc))
@@ -525,7 +610,9 @@ class Orchestrator:
 
     async def run_forever(self) -> None:
         """Дълготраен режим за домашния сървър."""
-        last_discover = 0.0
+        # loop.time() брои от пускането на машината, не от 1970. С 0.0 за
+        # начало първото обхождане след рестарт на сървъра чакаше 4 часа.
+        last_discover: float | None = None
         loop = asyncio.get_running_loop()
 
         while True:
@@ -536,7 +623,10 @@ class Orchestrator:
                 continue
 
             now = loop.time()
-            do_discover = (now - last_discover) >= self.cfg.schedule.discover_every_min * 60
+            do_discover = (
+                last_discover is None
+                or (now - last_discover) >= self.cfg.schedule.discover_every_min * 60
+            )
             if do_discover:
                 last_discover = now
 
