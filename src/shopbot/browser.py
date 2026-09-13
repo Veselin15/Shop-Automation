@@ -193,8 +193,29 @@ class BrowserSession:
         assert self.context, "сесията не е стартирана"
         dest.parent.mkdir(parents=True, exist_ok=True)
         state = await self.context.storage_state()
-        dest.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        # През временен файл: прекъснат запис иначе оставя половин JSON и
+        # следващият старт няма никаква сесия.
+        tmp = dest.with_name(dest.name + ".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, dest)
         return dest
+
+    async def save_seed(self) -> None:
+        """Записва живата сесия обратно във файла, от който е вляна.
+
+        Bazar.bg сменя `jwt` и `pl` в движение, а старата `pl` вече не пуска.
+        Файл, останал от момента на входа, остарява след първия цикъл — щом
+        профилът изгуби новата `pl`, спасение няма и се иска пак код. Затова
+        след всеки успешен цикъл файлът става снимка на днешната сесия.
+        """
+        if not (self.context and self.seed_state):
+            return
+        try:
+            await self.export_state(self.seed_state)
+        except Exception as exc:
+            log.warning("сесията не се записа в %s: %s", self.seed_state, exc)
+        else:
+            log.info("сесията е записана обратно в %s", self.seed_state.name)
 
     async def import_state(self, source: Path) -> tuple[int, int]:
         """Влива изнесена сесия в текущия профил. Връща (бисквитки, origins)."""

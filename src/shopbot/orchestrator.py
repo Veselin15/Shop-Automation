@@ -129,16 +129,23 @@ class Orchestrator:
             seed_state=self.cfg.session_file("bestsecret"),
         )
         await session.start()
+        signed_in = False
         try:
             source = BestSecretSource(self.cfg, session)
             page = await session.new_page()
             await source.ensure_session(page)
+            signed_in = True
 
             if reconcile:
                 await self._recheck_published(source, page, session, report)
             if discover:
                 await self._discover(source, page, session, report)
+        except AuthWallError:
+            signed_in = False    # мъртва сесия не бива да затрие файла
+            raise
         finally:
+            if signed_in:
+                await session.save_seed()
             await session.stop()
 
     async def _discover(
@@ -431,17 +438,24 @@ class Orchestrator:
             seed_state=self.cfg.session_file("bazar"),
         )
         await session.start()
+        signed_in = False
         try:
             sink = BazarSink(self.cfg, session, self.pacer)
             page = await session.new_page()
             await sink.ensure_logged_in(page)
+            signed_in = True
 
             if removals:
                 await self._remove_listings(sink, page, removals, report, dry_run)
             if candidates:
                 await self._publish_candidates(sink, page, candidates, report, dry_run)
             return True
+        except AuthWallError:
+            signed_in = False    # мъртва сесия не бива да затрие файла
+            raise
         finally:
+            if signed_in:
+                await session.save_seed()
             await session.stop()
 
     def _pending_removals(self) -> list[tuple[str, str, str, str, str]]:

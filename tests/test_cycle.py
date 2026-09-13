@@ -139,6 +139,54 @@ def test_no_trip_to_bazar_when_nothing_may_be_published(orch, monkeypatch):
     assert asyncio.run(o._sink_phase(CycleReport(), True, True, False)) is False
 
 
+def test_a_live_session_is_written_back_and_a_dead_one_is_not(orch, monkeypatch):
+    """Bazar.bg сменя `pl` в движение; файлът от входа остаряваше за един цикъл."""
+    o, db, cfg, _ = orch
+    cfg.listing.category_map = {"watches_men": 336}
+    queue(db, cfg, "w1")
+    saved = []
+    walled = False
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def start(self):
+            pass
+
+        async def new_page(self):
+            return None
+
+        async def save_seed(self):
+            saved.append(True)
+
+        async def stop(self):
+            pass
+
+    class FakeSink:
+        def __init__(self, *args):
+            pass
+
+        async def ensure_logged_in(self, page):
+            if walled:
+                raise AuthWallError("bazar", "login wall")
+
+    async def publish(*args):
+        pass
+
+    monkeypatch.setattr("shopbot.orchestrator.BrowserSession", FakeSession)
+    monkeypatch.setattr("shopbot.orchestrator.BazarSink", FakeSink)
+    monkeypatch.setattr(o, "_publish_candidates", publish)
+
+    assert asyncio.run(o._sink_phase(CycleReport(), True, False, False)) is True
+    assert saved == [True]
+
+    walled = True
+    with pytest.raises(AuthWallError):
+        asyncio.run(o._sink_phase(CycleReport(), True, False, False))
+    assert saved == [True], "стената не бива да презапише добрия файл"
+
+
 def test_an_unread_catalogue_price_does_not_erase_the_discount(orch):
     _, db, _, _ = orch
     db.upsert_product(make_product("p1"))
