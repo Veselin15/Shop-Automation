@@ -861,6 +861,62 @@ def remove(
 
 
 @app.command()
+def requeue(
+    bazar_ids: list[str] = typer.Argument(..., help="номера на обявите в Bazar.bg"),
+    keep_ad: bool = typer.Option(False, "--keep-ad", help="само в базата, без да трие в Bazar.bg"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Връща обяви в опашката — например изпратените след края на безплатните.
+
+    Такава обява има номер, но стои в „Чакащи плащане“ и никой не я вижда.
+    Командата я трие в Bazar.bg и връща продукта като кандидат без изгорял
+    опит: щом безплатните обяви се върнат, излиза отново.
+    """
+    setup_logging(verbose)
+    cfg, db, _ = _ctx()
+    rows = {}
+    for bazar_id in bazar_ids:
+        row = db.listing_by_bazar_id(bazar_id)
+        if row is None:
+            console.print(f"[yellow]{bazar_id}: няма я в базата, пропускам[/yellow]")
+        else:
+            rows[bazar_id] = row
+    if not rows:
+        raise typer.Exit(1)
+
+    async def _delete() -> set[str]:
+        session = BrowserSession(
+            "bazar", cfg.profiles_dir / "bazar", cfg.runtime.headless,
+            seed_state=cfg.session_file("bazar"),
+        )
+        await session.start()
+        deleted: set[str] = set()
+        try:
+            pacer = Pacer(cfg.runtime)
+            sink = BazarSink(cfg, session, pacer)
+            page = await session.new_page()
+            await sink.ensure_logged_in(page)
+            for bazar_id in rows:
+                if await sink.delete_ad(bazar_id, page):
+                    deleted.add(bazar_id)
+                else:
+                    console.print(f"[red]{bazar_id}: още е там, оставям я в базата[/red]")
+                await pacer.pause(factor=0.3)
+        finally:
+            await session.stop()
+        return deleted
+
+    done = set(rows) if keep_ad else _run_async(_delete())
+    for bazar_id in bazar_ids:
+        if bazar_id not in done:
+            continue
+        row = rows[bazar_id]
+        db.requeue(row["product_id"], "чакаше плащане в Bazar.bg")
+        db.log_event("requeued", bazar_id, row["product_id"])
+        console.print(f"[green]в опашката:[/green] {row['title']}")
+
+
+@app.command()
 def sync(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
     """Сверява базата с реално активните обяви в Bazar.bg.
 
