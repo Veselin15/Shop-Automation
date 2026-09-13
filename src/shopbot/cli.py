@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import typer
@@ -426,6 +426,34 @@ def listings() -> None:
             row["product_id"],
         )
     console.print(table)
+
+
+@app.command()
+def quota(
+    until: str = typer.Option("", "--until", help="спри публикуването до тази дата (ГГГГ-ММ-ДД)"),
+    clear: bool = typer.Option(False, "--clear", help="пусни публикуването отново"),
+) -> None:
+    """Докога публикуването чака нови безплатни обяви в Bazar.bg.
+
+    Ботът записва датата сам, щом види „Лимит за безплатни обяви“. Тук се
+    задава на ръка — например веднага след като видиш съобщението в сайта.
+    """
+    _, db, _ = _ctx()
+    if clear:
+        db.set_state("free_ads_resume_on", "")
+    elif until:
+        try:
+            date.fromisoformat(until)
+        except ValueError:
+            console.print(f"[red]'{until}' не е дата във вида ГГГГ-ММ-ДД.[/red]")
+            raise typer.Exit(1) from None
+        db.set_state("free_ads_resume_on", until)
+
+    resume = db.get_state("free_ads_resume_on")
+    if resume:
+        console.print(f"Публикуването чака до [bold]{resume}[/bold]; свалянето продължава.")
+    else:
+        console.print("Публикуването не чака.")
 
 
 @app.command()

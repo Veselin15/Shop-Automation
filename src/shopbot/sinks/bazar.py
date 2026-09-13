@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -99,13 +100,62 @@ class CaptchaWall(PublishError):
     """Bazar.bg пита „не сте робот“. Стената е пред профила, не пред обявата."""
 
 
-class ProfileFull(PublishError):
-    """Bazar.bg отказва нова обява, защото профилът е стигнал тавана си."""
+@dataclass(slots=True)
+class FreeAdQuota:
+    """Какво Bazar.bg казва за безплатните обяви на профила."""
+
+    remaining: int | None = None
+    total: int | None = None
+    resume_on: date | None = None
+    exhausted: bool = False
 
 
-# Съобщението при пълен профил още не е виждано на живо, думите са
-# предположение. Грешно разпознаване само спира серията, без да гори опити.
-PROFILE_FULL = re.compile(r"лимит|максимален брой|максимум \d+ обяв", re.IGNORECASE)
+class QuotaExhausted(PublishError):
+    """Свършиха безплатните обяви. Изпратената сега отива в „Чакащи плащане“."""
+
+    def __init__(self, message: str, quota: FreeAdQuota, draft_id: str = "") -> None:
+        super().__init__(message)
+        self.quota = quota
+        self.draft_id = draft_id
+
+
+# Текстът, който Bazar.bg показва след стотната обява (дословно):
+#     Лимит за безплатни обяви
+#     Виждаш това, защото си достигнал лимита за безплатни обяви.
+#     Брой оставащи безплатни обяви: 0 / 100
+#     *Дата на следваща безплатна обява - 17 септември
+QUOTA_REACHED = re.compile(r"достигнал[аи]? лимита за безплатни обяви", re.IGNORECASE)
+QUOTA_LEFT = re.compile(r"оставащи безплатни обяви:\s*(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+QUOTA_DATE = re.compile(
+    r"следваща безплатна обява\s*[-–—:]?\s*(\d{1,2})\s+([а-я]+)", re.IGNORECASE
+)
+MONTHS = {
+    "януари": 1, "февруари": 2, "март": 3, "април": 4, "май": 5, "юни": 6,
+    "юли": 7, "август": 8, "септември": 9, "октомври": 10, "ноември": 11, "декември": 12,
+}
+
+
+def read_free_ad_quota(text: str, today: date) -> FreeAdQuota | None:
+    """None, ако страницата не казва нищо за безплатните обяви."""
+    left = QUOTA_LEFT.search(text)
+    when = QUOTA_DATE.search(text)
+    reached = QUOTA_REACHED.search(text)
+    if not (left or when or reached):
+        return None
+
+    quota = FreeAdQuota()
+    if left:
+        quota.remaining, quota.total = int(left.group(1)), int(left.group(2))
+    if when and when.group(2).casefold() in MONTHS:
+        day, month = int(when.group(1)), MONTHS[when.group(2).casefold()]
+        # „3 януари“, прочетено през декември, е догодина.
+        year = today.year + (1 if month < today.month else 0)
+        try:
+            quota.resume_on = date(year, month, day)
+        except ValueError:
+            pass
+    quota.exhausted = bool(reached) or quota.remaining == 0
+    return quota
 
 # Броячите под всяка обява в „Моите обяви“:
 #     Прегледи: 8 · Телефон: 0 · Добавено в Любими: 0
@@ -307,6 +357,9 @@ class BazarSink:
 
         if not await self.is_logged_in(page):
             raise AuthWallError(SITE, "изхвърлени сме от сесията на формата за обява")
+        # Без безплатни обяви формата пак се попълва и изпраща, но обявата
+        # отива в „Чакащи плащане“. Затова се гледа преди първото поле.
+        await self._check_free_ads(page)
 
         title = await require_locator(page, self.sel["form_title"], "заглавие")
         await type_like_human(title, listing.title)
@@ -340,6 +393,9 @@ class BazarSink:
         await page.wait_for_timeout(5000)
 
         ad_id, ad_url = await self._detect_published(page)
+        # Номер в адреса не значи видима обява: и чакащата плащане има номер.
+        # Така стотата обява и трите след нея се записаха като публикувани.
+        await self._check_free_ads(page, draft_id=ad_id)
         if not ad_id:
             error_text = await self._read_form_error(page)
             empty = await self._unfilled_fields(page)
@@ -351,12 +407,29 @@ class BazarSink:
             parts.append(f"снимка: {shot}")
             if ROBOT_CHECK.search(error_text):
                 raise CaptchaWall("; ".join(parts))
-            if PROFILE_FULL.search(error_text):
-                raise ProfileFull("; ".join(parts))
             raise PublishError("; ".join(parts))
 
         log.info("Bazar.bg: публикувана обява %s -> %s", ad_id, ad_url)
         return ad_id, ad_url
+
+    async def _check_free_ads(self, page: Page, draft_id: str = "") -> None:
+        """Спира публикуването, щом Bazar.bg каже, че безплатните обяви свършиха."""
+        try:
+            text = await page.inner_text("body")
+        except Exception as exc:
+            log.warning("Bazar.bg: текстът на страницата не се прочете за лимита: %s", exc)
+            return
+        quota = read_free_ad_quota(text, self.pacer.now().date())
+        if quota is None:
+            return
+        if quota.exhausted:
+            raise QuotaExhausted(
+                f"свършиха безплатните обяви ({quota.remaining}/{quota.total}), "
+                f"следваща на {quota.resume_on or 'неизвестна дата'}",
+                quota,
+                draft_id,
+            )
+        log.info("Bazar.bg: остават %s от %s безплатни обяви", quota.remaining, quota.total)
 
     def _check_content(self, listing: Listing) -> None:
         """Правилата на Bazar.bg, проверени преди изобщо да отворим формата.

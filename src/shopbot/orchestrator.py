@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 
 from .appraise import AppraisalUnavailable, appraise, prompt_version
 from .browser import AuthWallError, BrowserSession, SelectorMissing
@@ -18,7 +19,13 @@ from .models import Product, ProductStatus
 from .notify import Notifier
 from .pricing import compute_price, format_money
 from .selection import Swap, evaluate, fair_order, plan_swaps
-from .sinks.bazar import BazarSink, CaptchaWall, ProfileFull, ProfileSnapshot, PublishError
+from .sinks.bazar import (
+    BazarSink,
+    CaptchaWall,
+    ProfileSnapshot,
+    PublishError,
+    QuotaExhausted,
+)
 from .sources.bestsecret import BestSecretSource, CardHit
 
 log = logging.getLogger(__name__)
@@ -102,6 +109,11 @@ class Orchestrator:
     def _swap_limiter(self) -> DailyLimiter:
         return DailyLimiter(self.db, "swap", self.cfg.rotation.max_per_day)
 
+    def _quota_blocked(self) -> bool:
+        """Свършили ли са безплатните обяви до ден, който още не е дошъл."""
+        until = self.db.get_state("free_ads_resume_on")
+        return bool(until) and self.pacer.now().date() < date.fromisoformat(until)
+
     def _plan_swaps(self, limit: int) -> list[Swap]:
         if not self.cfg.rotation.enabled:
             return []
@@ -167,6 +179,7 @@ class Orchestrator:
 
             if reconcile:
                 await self._recheck_published(source, page, session, report)
+                await self._recheck_queue(source, page, report)
             if discover:
                 await self._discover(source, page, session, report)
         except AuthWallError:
@@ -439,6 +452,60 @@ class Orchestrator:
                 self.db.update_prices(product_id, product.price, product.orig_price)
             await self.pacer.pause(factor=0.3)
 
+    async def _recheck_queue(self, source: BestSecretSource, page, report: CycleReport) -> None:
+        """Проверява в BestSecret кандидатите, които излизат следващи.
+
+        Безплатните обяви са сто. Кандидат, чакал два дни в опашката, може
+        вече да е изчерпан — обява за него изгаря една от стоте и носи само
+        купувач, на когото няма какво да се продаде.
+        """
+        if self._quota_blocked():
+            return
+        cutoff = (
+            datetime.now(UTC) - timedelta(hours=self.cfg.schedule.recheck_min_age_h)
+        ).isoformat(timespec="seconds")
+
+        for row in publish_queue(self.db, self.cfg, self.cfg.limits.max_publish_per_run):
+            product_id = row["product_id"]
+            checked = self.db.last_checked(product_id)
+            if checked and checked >= cutoff:
+                continue
+            product = self.db.get_product(product_id)
+            if product is None:
+                continue
+            try:
+                fresh = await source.fetch_product(product.url, product.category_key, page)
+            except AuthWallError:
+                raise
+            except Exception as exc:
+                log.warning("проверката на кандидат %s се провали: %s", product_id, exc)
+                continue
+            await self.pacer.pause(factor=0.3)
+
+            report.rechecked += 1
+            if fresh is None:
+                self.db.mark_checked(product_id, ProductStatus.GONE, miss=True)
+                if self.db.miss_count(product_id) >= self.cfg.removal.misses_before_removal:
+                    self._drop_candidate(product_id, "продуктът вече го няма в BestSecret")
+                continue
+            if fresh.price <= 0:
+                continue    # непрочетена цена не е присъда
+
+            self.db.mark_checked(product_id, fresh.status)
+            self.db.update_prices(product_id, fresh.price, fresh.orig_price)
+            current = self.db.get_product(product_id)
+            if fresh.status == ProductStatus.SOLD_OUT:
+                self._drop_candidate(product_id, "изчерпан преди публикуване")
+            elif current.discount_pct < self.cfg.selection.min_discount_pct:
+                self._drop_candidate(
+                    product_id, f"намалението падна на {current.discount_pct}% преди публикуване"
+                )
+
+    def _drop_candidate(self, product_id: str, reason: str) -> None:
+        log.info("кандидатът %s отпада: %s", product_id, reason)
+        self.db.mark_removed(product_id, reason)
+        self.db.log_event("dropped", reason, product_id)
+
     # ------------------------------------------------------------ фаза Bazar
 
     async def _sink_phase(
@@ -449,8 +516,11 @@ class Orchestrator:
         # При изчерпан дневен лимит няма какво да се публикува. Без тази
         # проверка ботът пак влизаше в профила на всеки цикъл само за да
         # установи това — вход без никакво действие изглежда като бот.
+        # Свършилите безплатни обяви също: до деня, който Bazar.bg е казал,
+        # всяка изпратена обява отива в „Чакащи плащане“.
         may_publish = (
             publish
+            and not self._quota_blocked()
             and self._publish_limiter().allow()
             and bool(self.db.pending_candidates())
         )
@@ -594,8 +664,9 @@ class Orchestrator:
             if row is not None and row["state"] == "published":
                 self.db.mark_removed(row["product_id"], "неактивна в Bazar.bg (изтекла?)")
                 self.db.log_event("expired", bazar_id, row["product_id"])
+        self._reclaim_unseen(snapshot)
 
-        stats = {ad_id: s for ad_id, s in snapshot.active.items() if s is not None}
+        stats ={ad_id: s for ad_id, s in snapshot.active.items() if s is not None}
         self.db.save_ad_stats(stats)
         if snapshot.active and not stats:
             log.warning("броячите под обявите не се прочетоха — размени няма да има; "
@@ -607,6 +678,36 @@ class Orchestrator:
         log.info("Bazar.bg: %d активни + %d неактивни от %d места, свободни %d",
                  len(snapshot.active), len(snapshot.inactive), slots, free)
         return free
+
+    def _reclaim_unseen(self, snapshot: ProfileSnapshot) -> None:
+        """Обява от базата, която я няма в нито един от двата списъка.
+
+        Скорошната най-често е изпратена след края на безплатните обяви: има
+        номер, но чака плащане и никой не я вижда — връща се в опашката. По-
+        старата е изтрита на ръка. Липсват ли много наведнъж, четенето се е
+        провалило и базата не се пипа.
+        """
+        if not snapshot.active:
+            return
+        seen = set(snapshot.active) | set(snapshot.inactive)
+        unseen = [r for r in self.db.active_listings()
+                  if r["bazar_id"] and r["bazar_id"] not in seen]
+        if len(unseen) > 10:
+            log.warning("Bazar.bg: %d обяви от базата ги няма в профила — "
+                        "по-скоро четенето е непълно, не пипам нищо", len(unseen))
+            return
+
+        recent = datetime.now(UTC) - timedelta(days=2)
+        for row in unseen:
+            published = row["published_at"]
+            if published and datetime.fromisoformat(published) >= recent:
+                reason = "не се вижда в Bazar.bg (чака плащане?)"
+                self.db.requeue(row["product_id"], reason)
+            else:
+                reason = "изчезнала от Bazar.bg (ръчно изтрита?)"
+                self.db.mark_removed(row["product_id"], reason)
+            log.info("Bazar.bg: %s — %s", row["title"], reason)
+            self.db.log_event("unseen", f"{row['bazar_id']} {reason}", row["product_id"])
 
     async def _purge_inactive(
         self, sink: BazarSink, page, snapshot: ProfileSnapshot, report: CycleReport,
@@ -777,11 +878,24 @@ class Orchestrator:
                     "спира до следващия цикъл, кандидатите не губят опит.",
                 )
             return "stop"
-        except ProfileFull as exc:
-            # Таванът е на профила, не на обявата — опит не се губи.
-            log.warning("Bazar.bg казва, че профилът е пълен, спирам: %s", exc)
+        except QuotaExhausted as exc:
+            # Лимитът е на профила, не на обявата — опит не се губи, а
+            # публикуването спира до деня, в който Bazar.bg дава нова.
+            resume = exc.quota.resume_on or self.pacer.now().date() + timedelta(days=1)
+            self.db.set_state("free_ads_resume_on", resume.isoformat())
+            log.warning("свършиха безплатните обяви, публикуването спира до %s: %s",
+                        resume, exc)
             report.errors.append(str(exc))
-            self.db.log_event("profile_full", str(exc), product.id)
+            self.db.log_event("quota", f"до {resume}; чака плащане: {exc.draft_id or '-'}",
+                              product.id)
+            if self.cfg.notifications.on_error:
+                draft = (f" Обява {exc.draft_id} остана в „Чакащи плащане“."
+                         if exc.draft_id else "")
+                await self.notifier.error(
+                    "публикуване",
+                    f"Свършиха безплатните обяви в Bazar.bg. Публикуването спира до "
+                    f"{resume:%d.%m}, свалянето продължава.{draft}",
+                )
             return "stop"
         except (PublishError, SelectorMissing) as exc:
             log.warning("публикуването на %s се провали: %s", product.id, exc)

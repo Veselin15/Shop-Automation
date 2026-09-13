@@ -83,6 +83,11 @@ CREATE TABLE IF NOT EXISTS counters (
     PRIMARY KEY (day, kind)
 );
 
+CREATE TABLE IF NOT EXISTS state (
+    key     TEXT PRIMARY KEY,
+    value   TEXT DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_listings_state ON listings(state);
 CREATE INDEX IF NOT EXISTS idx_products_checked ON products(last_checked);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
@@ -203,6 +208,12 @@ class Database:
     def known_product_ids(self) -> set[str]:
         return {r[0] for r in self.conn.execute("SELECT id FROM products")}
 
+    def last_checked(self, product_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT last_checked FROM products WHERE id=?", (product_id,)
+        ).fetchone()
+        return row[0] if row else None
+
     def miss_count(self, product_id: str) -> int:
         row = self.conn.execute(
             "SELECT miss_count FROM products WHERE id=?", (product_id,)
@@ -255,6 +266,15 @@ class Database:
                 "UPDATE listings SET state=?, attempts=attempts+1, last_error=? "
                 "WHERE product_id=?",
                 (str(ListingState.FAILED), error[:500], product_id),
+            )
+
+    def requeue(self, product_id: str, reason: str) -> None:
+        """Обратно в опашката, без да се брои за провален опит."""
+        with self.tx() as c:
+            c.execute(
+                "UPDATE listings SET state=?, bazar_id=NULL, bazar_url=NULL, "
+                "published_at=NULL, last_error=? WHERE product_id=?",
+                (str(ListingState.CANDIDATE), reason[:500], product_id),
             )
 
     def mark_removed(self, product_id: str, reason: str) -> None:
@@ -397,6 +417,20 @@ class Database:
                 "score=excluded.score, reason=excluded.reason, model=excluded.model, "
                 "prompt=excluded.prompt, created_at=excluded.created_at",
                 (product_id, score, reason[:300], model, prompt, utcnow()),
+            )
+
+    # ---------------- state ----------------
+
+    def get_state(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_state(self, key: str, value: str) -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO state (key, value) VALUES (?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
             )
 
     # ---------------- events & counters ----------------

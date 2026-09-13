@@ -207,6 +207,7 @@ class FakeSink:
 
 def test_a_full_profile_swaps_the_ad_nobody_looks_at(orch, monkeypatch):
     o, db, cfg = orch
+    cfg.rotation.enabled = True
     cfg.limits.profile_slots = 2
     live(db, "quiet")
     live(db, "busy")
