@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-from .models import Listing, ListingState, Product, ProductStatus, Size, utcnow
+from .models import AdStats, Listing, ListingState, Product, ProductStatus, Size, utcnow
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
@@ -52,7 +52,11 @@ CREATE TABLE IF NOT EXISTS listings (
     published_at    TEXT,
     publish_discount_pct INTEGER DEFAULT 0,
     removed_at      TEXT,
-    removal_reason  TEXT DEFAULT ''
+    removal_reason  TEXT DEFAULT '',
+    views           INTEGER DEFAULT 0,
+    phones          INTEGER DEFAULT 0,
+    favorites       INTEGER DEFAULT 0,
+    stats_at        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -112,6 +116,10 @@ class Database:
             self.conn.execute(
                 "ALTER TABLE listings ADD COLUMN publish_discount_pct INTEGER DEFAULT 0"
             )
+        for column, kind in (("views", "INTEGER DEFAULT 0"), ("phones", "INTEGER DEFAULT 0"),
+                             ("favorites", "INTEGER DEFAULT 0"), ("stats_at", "TEXT")):
+            if column not in columns:
+                self.conn.execute(f"ALTER TABLE listings ADD COLUMN {column} {kind}")
         # Категорията беше текстов път ("Мода > Аксесоари"), сега е числово id.
         if "category_label" in columns and "category_id" not in columns:
             self.conn.execute("ALTER TABLE listings DROP COLUMN category_label")
@@ -306,6 +314,43 @@ class Database:
 
     def active_listings(self) -> list[sqlite3.Row]:
         return list(self.conn.execute("SELECT * FROM listings WHERE state='published'"))
+
+    def rotation_pool(self) -> list[sqlite3.Row]:
+        """Активните обяви с категорията, оценката и интереса — за размяната."""
+        return list(
+            self.conn.execute(
+                """
+                SELECT l.*, p.category_key AS category_key,
+                       COALESCE(a.score, -1) AS appraisal
+                FROM listings l
+                JOIN products p ON p.id = l.product_id
+                LEFT JOIN appraisals a ON a.product_id = l.product_id
+                WHERE l.state = 'published' AND COALESCE(l.bazar_id, '') != ''
+                """
+            )
+        )
+
+    def listing_by_bazar_id(self, bazar_id: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM listings WHERE bazar_id=?", (bazar_id,)
+        ).fetchone()
+
+    def save_ad_stats(self, stats: Mapping[str, AdStats]) -> None:
+        """Броячите от последното четене на „Моите обяви“.
+
+        Обява, чиито броячи този път не се прочетоха, остава без тях — и
+        размяната не я пипа. Стари нули не бива да свалят обява, за която
+        междувременно някой е поискал телефона.
+        """
+        now = utcnow()
+        with self.tx() as c:
+            c.execute("UPDATE listings SET stats_at=NULL WHERE state='published'")
+            c.executemany(
+                "UPDATE listings SET views=?, phones=?, favorites=?, stats_at=? "
+                "WHERE bazar_id=? AND state='published'",
+                [(s.views, s.phones, s.favorites, now, bazar_id)
+                 for bazar_id, s in stats.items()],
+            )
 
     def active_listing_count(self) -> int:
         row = self.conn.execute(

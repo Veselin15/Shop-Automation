@@ -10,7 +10,7 @@ from shopbot.db import Database
 from shopbot.models import Listing, Product
 from shopbot.notify import Notifier
 from shopbot.orchestrator import CycleReport, Orchestrator
-from shopbot.sinks.bazar import CaptchaWall
+from shopbot.sinks.bazar import CaptchaWall, ProfileSnapshot
 
 
 class CountingNotifier(Notifier):
@@ -171,8 +171,11 @@ def test_a_live_session_is_written_back_and_a_dead_one_is_not(orch, monkeypatch)
             if walled:
                 raise AuthWallError("bazar", "login wall")
 
-    async def publish(*args):
-        pass
+        async def read_profile(self, page):
+            return ProfileSnapshot()
+
+    async def publish(*args, **kwargs):
+        return 0, False
 
     monkeypatch.setattr("shopbot.orchestrator.BrowserSession", FakeSession)
     monkeypatch.setattr("shopbot.orchestrator.BazarSink", FakeSink)

@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeout
@@ -39,7 +41,7 @@ from ..browser import (
 )
 from ..config import Config
 from ..humanize import Pacer
-from ..models import Listing
+from ..models import AdStats, Listing
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +97,52 @@ class PublishError(RuntimeError):
 
 class CaptchaWall(PublishError):
     """Bazar.bg пита „не сте робот“. Стената е пред профила, не пред обявата."""
+
+
+class ProfileFull(PublishError):
+    """Bazar.bg отказва нова обява, защото профилът е стигнал тавана си."""
+
+
+# Съобщението при пълен профил още не е виждано на живо, думите са
+# предположение. Грешно разпознаване само спира серията, без да гори опити.
+PROFILE_FULL = re.compile(r"лимит|максимален брой|максимум \d+ обяв", re.IGNORECASE)
+
+# Броячите под всяка обява в „Моите обяви“:
+#     Прегледи: 8 · Телефон: 0 · Добавено в Любими: 0
+AD_STATS = {
+    "views": re.compile(r"Прегледи:\s*(\d+)", re.IGNORECASE),
+    "phones": re.compile(r"Телефон:\s*(\d+)", re.IGNORECASE),
+    "favorites": re.compile(r"Любими:\s*(\d+)", re.IGNORECASE),
+}
+
+
+def parse_ad_stats(text: str) -> AdStats | None:
+    """None, ако липсва дори един брояч: непрочетеното не е нула.
+
+    Нула телефони значи „никой не я иска“ и праща обявата към размяна. Ако
+    просто не сме намерили етикета, това сваля обява, за която някой е звънял.
+    """
+    found = {key: pattern.search(text) for key, pattern in AD_STATS.items()}
+    if not all(found.values()):
+        return None
+    return AdStats(**{key: int(match.group(1)) for key, match in found.items()})
+
+
+@dataclass(slots=True)
+class ProfileSnapshot:
+    """Обявите в профила: активните с броячите си и деактивираните."""
+
+    active: dict[str, AdStats | None] = field(default_factory=dict)
+    inactive: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Номер и в двата списъка значи, че филтърът ?state=4 не е сработил.
+        # Такъв номер не е „неактивен“ — иначе живата обява се трие.
+        self.inactive = [i for i in self.inactive if i not in self.active]
+
+    @property
+    def used(self) -> int:
+        return len(self.active) + len(self.inactive)
 
 
 class BazarSink:
@@ -303,6 +351,8 @@ class BazarSink:
             parts.append(f"снимка: {shot}")
             if ROBOT_CHECK.search(error_text):
                 raise CaptchaWall("; ".join(parts))
+            if PROFILE_FULL.search(error_text):
+                raise ProfileFull("; ".join(parts))
             raise PublishError("; ".join(parts))
 
         log.info("Bazar.bg: публикувана обява %s -> %s", ad_id, ad_url)
@@ -706,34 +756,99 @@ class BazarSink:
         title = (await page.title()).casefold()
         return "не е намерена" not in title and "not found" not in title
 
+    async def read_profile(self, page: Page, max_pages: int = 20) -> ProfileSnapshot:
+        """Колко места заема профилът и какъв интерес има всяка активна обява.
+
+        Таванът от 100 брои и деактивираните, затова се четат и двата списъка.
+        """
+        snapshot = ProfileSnapshot(
+            active=await self._walk_ads(page, "", max_pages),
+            inactive=list(await self._walk_ads(page, "state=4", max_pages)),
+        )
+        read = sum(1 for s in snapshot.active.values() if s is not None)
+        log.info("Bazar.bg: %d активни (броячи за %d) и %d неактивни обяви",
+                 len(snapshot.active), read, len(snapshot.inactive))
+        return snapshot
+
     async def list_my_ads(self, page: Page, max_pages: int = 20) -> list[str]:
-        """ID-тата на активните обяви — за сверяване с базата.
+        """ID-тата на активните обяви — за сверяване с базата."""
+        found = list(await self._walk_ads(page, "", max_pages))
+        log.info("Bazar.bg: %d активни обяви в профила", len(found))
+        return found
+
+    async def _walk_ads(
+        self, page: Page, query: str, max_pages: int
+    ) -> dict[str, AdStats | None]:
+        """Един списък от „Моите обяви“ с броячите на всяка обява.
 
         Списъкът е на страници по двайсет. Четенето само на първата обявява
         всичко останало за изтрито и базата почва да лъже — затова се върви
         до страница, която не носи нищо ново.
         """
-        found: list[str] = []
-        seen: set[str] = set()
         base = self.sel["my_ads_url"]
+        found: dict[str, AdStats | None] = {}
 
         for page_no in range(1, max_pages + 1):
-            url = base if page_no == 1 else f"{base}?page={page_no}"
+            params = [p for p in (query, f"page={page_no}" if page_no > 1 else "") if p]
+            url = f"{base}?{'&'.join(params)}" if params else base
             await page.goto(url, wait_until="domcontentloaded")
             await self._handle_cookies(page)
             if not await self.is_logged_in(page):
                 raise AuthWallError(SITE, "сесията падна при четене на моите обяви")
+            # Началната страница носи „последни обяви“, сред тях и наши.
+            # Прочетени като неактивни след пренасочване, те щяха да се изтрият.
+            if urlparse(base).path not in page.url:
+                log.warning("Bazar.bg: %s пренасочи към %s, спирам четенето", url, page.url)
+                break
             await page.wait_for_timeout(1500)
 
-            batch = await self._ads_on_page(page)
-            fresh = [i for i in batch if i not in seen]
+            blocks = await self._ad_blocks(page)
+            fresh = {ad_id: text for ad_id, text in blocks.items() if ad_id not in found}
             if not fresh:
                 break
-            seen.update(fresh)
-            found.extend(fresh)
-
-        log.info("Bazar.bg: %d активни обяви в профила", len(found))
+            for ad_id, text in fresh.items():
+                found[ad_id] = parse_ad_stats(text)
         return found
+
+    async def _ad_blocks(self, page: Page) -> dict[str, str]:
+        """Текстът на всяка обява: от първата ѝ връзка до първата на следващата.
+
+        Броячите стоят под бутоните на обявата и не е ясно дали са в същия
+        контейнер. Редът в документа не зависи от това.
+        """
+        blocks = await page.evaluate(
+            r"""
+            () => {
+              const idOf = el => {
+                if (el.dataset && el.dataset.adId) return el.dataset.adId;
+                if (el.classList && el.classList.contains('archiveLink') && el.dataset.id)
+                  return el.dataset.id;
+                if (el.tagName === 'A') {
+                  const m = (el.getAttribute('href') || '').match(/obiava-(\d+)/);
+                  if (m) return m[1];
+                }
+                return null;
+              };
+              const blocks = {};
+              let current = null;
+              const walker = document.createTreeWalker(
+                document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+              for (let n = walker.currentNode; n; n = walker.nextNode()) {
+                if (n.nodeType === Node.ELEMENT_NODE) {
+                  const id = idOf(n);
+                  if (id) {
+                    current = id;
+                    if (!(id in blocks)) blocks[id] = '';
+                  }
+                } else if (current) {
+                  blocks[current] += ' ' + n.textContent;
+                }
+              }
+              return blocks;
+            }
+            """
+        )
+        return {str(ad_id): text for ad_id, text in blocks.items() if ad_id}
 
     async def _ads_on_page(self, page: Page) -> list[str]:
         ids = await page.evaluate(

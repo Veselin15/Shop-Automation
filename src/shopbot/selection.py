@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from .config import SelectionConfig
+from .config import RotationConfig, SelectionConfig
 from .models import Product
 
 
@@ -111,6 +112,114 @@ def fair_order(
         if not queues[key]:
             del queues[key]
     return order
+
+
+@dataclass(slots=True)
+class Swap:
+    victim: Mapping
+    candidate: Mapping
+    victim_value: float
+
+
+def _appraisal(row: Mapping) -> float:
+    """Обява от преди оценката носи -1 — за размяната това е нула, не загадка."""
+    value = row["appraisal"]
+    return max(float(value), 0.0) if value is not None else 0.0
+
+
+def _age_days(row: Mapping, now: datetime) -> float:
+    published = datetime.fromisoformat(row["published_at"])
+    return (now - published).total_seconds() / 86400
+
+
+def interest_rate(row: Mapping, now: datetime) -> float:
+    """Прегледи на ден. Първият ден се брои като цял, иначе новата обява лети."""
+    return (row["views"] or 0) / max(_age_days(row, now), 1.0)
+
+
+def listing_value(
+    row: Mapping, now: datetime, median_rate: float, min_age_days: float
+) -> float | None:
+    """Колко струва мястото на обявата, на скалата на оценката. None = не пипай.
+
+    Оценката на модела е предположение отпреди публикуването; прегледите
+    на ден са това, което купувачите казаха после. Обява под медианата на
+    профила губи до половината от оценката си. Показан телефон или добавяне
+    в любими значат, че някой я иска — такава обява не се сменя.
+    """
+    if not row["stats_at"] or not row["published_at"]:
+        return None
+    if (row["phones"] or 0) > 0 or (row["favorites"] or 0) > 0:
+        return None
+    if _age_days(row, now) < min_age_days:
+        return None
+
+    rate = interest_rate(row, now)
+    if median_rate > 0:
+        factor = 0.5 + 0.5 * min(rate / median_rate, 1.0)
+    else:
+        factor = 1.0 if rate > 0 else 0.5
+    return _appraisal(row) * factor
+
+
+def plan_swaps(
+    active: Sequence[Mapping],
+    candidates: Sequence[Mapping],
+    weights: Mapping[str, float],
+    slots: int,
+    cfg: RotationConfig,
+    now: datetime | None = None,
+    limit: int | None = None,
+) -> list[Swap]:
+    """Кои обяви да паднат и кои кандидати да влязат на тяхно място.
+
+    `candidates` идват вече подредени от `fair_order`. Всеки взима най-слабата
+    обява, която има право да смени, и то само ако я надвишава с `margin`.
+
+    Дялът по категории се пази и тук. Вътре в категорията смяната е честна.
+    Между категории място се мести само от препълнена към недопълнена —
+    иначе чантите с по-висока оценка изместват часовниците един по един, а
+    дамските чанти растат за сметка на мъжките, и двете вече над дела си.
+    """
+    now = now or datetime.now(UTC)
+    rates = sorted(interest_rate(r, now) for r in active if r["stats_at"] and r["published_at"])
+    median = rates[len(rates) // 2] if rates else 0.0
+
+    pool = []
+    for row in active:
+        value = listing_value(row, now, median, cfg.min_age_days)
+        if value is not None:
+            pool.append((value, row))
+
+    counts = Counter(r["category_key"] for r in active)
+    total_weight = sum(max(w, 0.0) for w in weights.values()) or 1.0
+
+    def share(key: str) -> float:
+        return slots * max(weights.get(key, 1.0), 0.0) / total_weight
+
+    swaps: list[Swap] = []
+    for candidate in candidates:
+        if not pool or (limit is not None and len(swaps) >= limit):
+            break
+        key = candidate["category_key"]
+        cross = counts[key] < share(key)
+        allowed = [
+            i for i, (_, row) in enumerate(pool)
+            if row["category_key"] == key
+            or (cross and counts[row["category_key"]] > share(row["category_key"]))
+        ]
+        if not allowed:
+            continue
+        index = min(allowed, key=lambda i: pool[i][0])
+        value, victim = pool[index]
+        if _appraisal(candidate) < value + cfg.margin:
+            continue
+
+        del pool[index]
+        counts[victim["category_key"]] -= 1
+        counts[key] += 1
+        swaps.append(Swap(victim, candidate, value))
+    return swaps
 
 
 def evaluate(product: Product, cfg: SelectionConfig) -> Verdict:

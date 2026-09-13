@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .appraise import AppraisalUnavailable, appraise, prompt_version
@@ -16,8 +17,8 @@ from .media import download_images
 from .models import Product, ProductStatus
 from .notify import Notifier
 from .pricing import compute_price, format_money
-from .selection import evaluate, fair_order
-from .sinks.bazar import BazarSink, CaptchaWall, PublishError
+from .selection import Swap, evaluate, fair_order, plan_swaps
+from .sinks.bazar import BazarSink, CaptchaWall, ProfileFull, ProfileSnapshot, PublishError
 from .sources.bestsecret import BestSecretSource, CardHit
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,8 @@ class CycleReport:
     appraisal_rejects: int = 0
     published: int = 0
     removed: int = 0
+    swapped: int = 0
+    purged: int = 0
     rechecked: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -41,7 +44,8 @@ class CycleReport:
             f"нови кандидати {self.new_candidates} "
             f"(оценени {self.appraised}, отпаднали {self.appraisal_rejects}), "
             f"публикувани {self.published}, проверени {self.rechecked}, "
-            f"свалени {self.removed}, грешки {len(self.errors)}"
+            f"свалени {self.removed}, разменени {self.swapped}, "
+            f"изтрити неактивни {self.purged}, грешки {len(self.errors)}"
         )
 
 
@@ -59,6 +63,21 @@ def publish_queue(db: Database, cfg: Config, limit: int) -> list:
     )
 
 
+def swap_plan(db: Database, cfg: Config, limit: int | None = None) -> list[Swap]:
+    """Коя обява би отстъпила място и на кого. Същото вижда и `shopbot rotation`.
+
+    Кандидатите се редят спрямо активните обяви, не спрямо излезлите за деня:
+    при пълен профил въпросът е кой дял е недопълнен сега.
+    """
+    active = db.rotation_pool()
+    weights = cfg.source.weights
+    queue = fair_order(
+        db.pending_candidates(), weights, Counter(r["category_key"] for r in active)
+    )
+    return plan_swaps(active, queue, weights, cfg.limits.profile_slots, cfg.rotation,
+                      limit=limit)
+
+
 class Orchestrator:
     def __init__(self, cfg: Config, db: Database, notifier: Notifier) -> None:
         self.cfg = cfg
@@ -69,6 +88,8 @@ class Orchestrator:
         self._appraisal_budget = cfg.appraisal.max_calls_per_run
         # Сайтове, за които вече е пратено известие "иска ръчен вход".
         self._walled: set[str] = set()
+        # Свободните места при последното влизане в Bazar.bg; None — не знаем.
+        self._free_slots: int | None = None
 
     # ------------------------------------------------------------- лимити
 
@@ -77,6 +98,14 @@ class Orchestrator:
 
     def _remove_limiter(self) -> DailyLimiter:
         return DailyLimiter(self.db, "remove", self.cfg.limits.max_remove_per_day)
+
+    def _swap_limiter(self) -> DailyLimiter:
+        return DailyLimiter(self.db, "swap", self.cfg.rotation.max_per_day)
+
+    def _plan_swaps(self, limit: int) -> list[Swap]:
+        if not self.cfg.rotation.enabled:
+            return []
+        return swap_plan(self.db, self.cfg, min(limit, self._swap_limiter().remaining))
 
     # ------------------------------------------------------------- цикъл
 
@@ -417,19 +446,20 @@ class Orchestrator:
     ) -> bool:
         """Връща дали е влязъл в Bazar.bg."""
         removals = self._pending_removals() if reconcile else []
-        # При изчерпан дневен лимит или пълен таван няма какво да се публикува.
-        # Без тази проверка ботът пак влизаше в профила на всеки цикъл само за
-        # да установи това — вход без никакво действие изглежда като бот.
-        has_room = (
-            self._publish_limiter().allow()
-            and self.db.active_listing_count() < self.cfg.limits.max_active_listings
+        # При изчерпан дневен лимит няма какво да се публикува. Без тази
+        # проверка ботът пак влизаше в профила на всеки цикъл само за да
+        # установи това — вход без никакво действие изглежда като бот.
+        may_publish = (
+            publish
+            and self._publish_limiter().allow()
+            and bool(self.db.pending_candidates())
         )
-        candidates = (
-            publish_queue(self.db, self.cfg, self.cfg.limits.max_publish_per_run)
-            if publish and has_room else []
-        )
+        # Същото при пълен профил: при последното влизане нямаше място, а по
+        # броячите от него няма и обява, която да отстъпи своето.
+        if may_publish and self._free_slots == 0 and not self._plan_swaps(limit=1):
+            may_publish = False
 
-        if not removals and not candidates:
+        if not removals and not may_publish:
             log.info("Bazar.bg: няма работа този цикъл")
             return False
 
@@ -445,10 +475,23 @@ class Orchestrator:
             await sink.ensure_logged_in(page)
             signed_in = True
 
+            snapshot = await sink.read_profile(page)
+            free = self._take_stock(snapshot)
+            free += await self._purge_inactive(sink, page, snapshot, report, dry_run)
             if removals:
-                await self._remove_listings(sink, page, removals, report, dry_run)
-            if candidates:
-                await self._publish_candidates(sink, page, candidates, report, dry_run)
+                removed = await self._remove_listings(sink, page, removals, report, dry_run)
+                if self.cfg.removal.mode == "delete":
+                    free += removed
+            if may_publish:
+                budget = self.cfg.limits.max_publish_per_run
+                candidates = publish_queue(self.db, self.cfg, min(budget, free))
+                published, stopped = await self._publish_candidates(
+                    sink, page, candidates, report, dry_run, slots=free
+                )
+                free -= published
+                if free <= 0 and not stopped:
+                    free += await self._rotate(sink, page, report, dry_run, budget - published)
+            self._free_slots = free
             return True
         except AuthWallError:
             signed_in = False    # мъртва сесия не бива да затрие файла
@@ -499,8 +542,9 @@ class Orchestrator:
 
     async def _remove_listings(
         self, sink: BazarSink, page, removals, report: CycleReport, dry_run: bool
-    ) -> None:
+    ) -> int:
         limiter = self._remove_limiter()
+        removed = 0
         for product_id, bazar_id, title, reason, bazar_url in removals:
             if not limiter.allow():
                 log.info("дневният лимит за сваляне е изчерпан")
@@ -529,96 +573,243 @@ class Orchestrator:
                 self.db.log_event("removed", reason, product_id)
                 limiter.consume()
                 report.removed += 1
+                removed += 1
                 if self.cfg.notifications.on_remove:
                     await self.notifier.removed(title, reason, bazar_url)
             await self.pacer.pause()
+        return removed
+
+    # ------------------------------------------------------ места в профила
+
+    def _take_stock(self, snapshot: ProfileSnapshot) -> int:
+        """Свободните места по истинския брой в профила.
+
+        Базата не знае за обявите, пуснати на ръка, нито кои са изтекли, а
+        Bazar.bg брои и деактивираните. Затова решава прочетеното. Базата е
+        само долна граница: изпусната страница не бива да отвори места, които
+        ги няма — следващата обява удря тавана.
+        """
+        for bazar_id in snapshot.inactive:
+            row = self.db.listing_by_bazar_id(bazar_id)
+            if row is not None and row["state"] == "published":
+                self.db.mark_removed(row["product_id"], "неактивна в Bazar.bg (изтекла?)")
+                self.db.log_event("expired", bazar_id, row["product_id"])
+
+        stats = {ad_id: s for ad_id, s in snapshot.active.items() if s is not None}
+        self.db.save_ad_stats(stats)
+        if snapshot.active and not stats:
+            log.warning("броячите под обявите не се прочетоха — размени няма да има; "
+                        "провери „Прегледи / Телефон / Любими“ в „Моите обяви“")
+
+        slots = self.cfg.limits.profile_slots
+        used = max(snapshot.used, self.db.active_listing_count())
+        free = max(slots - used, 0)
+        log.info("Bazar.bg: %d активни + %d неактивни от %d места, свободни %d",
+                 len(snapshot.active), len(snapshot.inactive), slots, free)
+        return free
+
+    async def _purge_inactive(
+        self, sink: BazarSink, page, snapshot: ProfileSnapshot, report: CycleReport,
+        dry_run: bool,
+    ) -> int:
+        """Трие деактивираните обяви на бота. Връща освободените места.
+
+        Деактивираната обява заема място от стоте, а никой не я вижда. Номер,
+        който базата не познава, е пуснат на ръка — него ботът не пипа.
+        """
+        if self.cfg.removal.mode != "delete":
+            return 0
+        limiter = self._remove_limiter()
+        purged = 0
+        for bazar_id in snapshot.inactive:
+            row = self.db.listing_by_bazar_id(bazar_id)
+            if row is None:
+                continue
+            if not limiter.allow():
+                log.info("дневният лимит за сваляне е изчерпан")
+                break
+            if dry_run:
+                log.info("DRY RUN: бих изтрил неактивната %s", row["title"])
+                continue
+            try:
+                ok = await sink.delete_ad(bazar_id, page)
+            except AuthWallError:
+                raise
+            except Exception as exc:
+                log.warning("изтриването на неактивната %s се провали: %s", bazar_id, exc)
+                report.errors.append(f"delete {bazar_id}: {exc}")
+                continue
+            if ok:
+                self.db.log_event("purged", f"неактивна {bazar_id}", row["product_id"])
+                limiter.consume()
+                report.purged += 1
+                purged += 1
+            await self.pacer.pause()
+        return purged
+
+    async def _rotate(
+        self, sink: BazarSink, page, report: CycleReport, dry_run: bool, budget: int
+    ) -> int:
+        """Пълен профил: сменя слаби обяви с по-добри кандидати.
+
+        Връща освободените места: паднала обява, чийто заместник не е
+        излязъл, оставя мястото си за следващия цикъл.
+        """
+        swaps = self._plan_swaps(min(budget, self.cfg.rotation.max_per_run))
+        remove_limiter = self._remove_limiter()
+        swap_limiter = self._swap_limiter()
+        publish_limiter = self._publish_limiter()
+        freed = 0
+
+        for swap in swaps:
+            if not (remove_limiter.allow() and swap_limiter.allow()
+                    and publish_limiter.allow()):
+                log.info("дневният лимит за размени е изчерпан")
+                break
+            victim, candidate = swap.victim, swap.candidate
+            reason = (
+                f"място за по-добра обява: {candidate['title'][:40]} "
+                f"({max(candidate['appraisal'], 0):.2f} срещу {swap.victim_value:.2f})"
+            )
+            if dry_run:
+                log.info("DRY RUN: бих сменил %s — %s", victim["title"], reason)
+                continue
+
+            try:
+                ok = await sink.delete_ad(victim["bazar_id"], page)
+            except AuthWallError:
+                raise
+            except Exception as exc:
+                log.warning("размяната на %s се провали: %s", victim["bazar_id"], exc)
+                report.errors.append(f"delete {victim['bazar_id']}: {exc}")
+                continue
+            if not ok:
+                continue
+
+            log.info("размяна: %s пада — %s", victim["title"], reason)
+            self.db.mark_removed(victim["product_id"], reason)
+            self.db.log_event("rotated", reason, victim["product_id"])
+            remove_limiter.consume()
+            swap_limiter.consume()
+            report.swapped += 1
+            freed += 1
+            if self.cfg.notifications.on_remove:
+                await self.notifier.removed(victim["title"], reason, victim["bazar_url"] or "")
+            await self.pacer.pause()
+
+            outcome = await self._publish_one(sink, page, candidate, report, dry_run)
+            if outcome == "published":
+                freed -= 1
+            elif outcome == "stop":
+                break
+        return freed
+
+    # ------------------------------------------------------------ публикуване
 
     async def _publish_candidates(
-        self, sink: BazarSink, page, candidates, report: CycleReport, dry_run: bool
-    ) -> None:
+        self, sink: BazarSink, page, candidates, report: CycleReport, dry_run: bool,
+        slots: int | None = None,
+    ) -> tuple[int, bool]:
+        """Връща (публикувани, спряно ли е) — спряната серия не минава към размени."""
         limiter = self._publish_limiter()
-        active = self.db.active_listing_count()
+        published = 0
 
         for row in candidates:
             if not limiter.allow():
                 log.info("дневният лимит за публикуване е изчерпан (%d)", limiter.cap)
+                return published, True
+            if slots is not None and published >= slots:
+                log.info("профилът е пълен (%d места)", self.cfg.limits.profile_slots)
                 break
-            if active >= self.cfg.limits.max_active_listings:
-                log.info("достигнат е таванът от %d активни обяви", active)
-                break
+            outcome = await self._publish_one(sink, page, row, report, dry_run)
+            if outcome == "stop":
+                return published, True
+            if outcome == "published":
+                published += 1
+        return published, False
 
-            product = self.db.get_product(row["product_id"])
-            if product is None:
-                continue
+    async def _publish_one(
+        self, sink: BazarSink, page, row, report: CycleReport, dry_run: bool
+    ) -> str:
+        """Една обява: "published", "skipped" или "stop" — последното спира серията."""
+        product = self.db.get_product(row["product_id"])
+        if product is None:
+            return "skipped"
 
-            price = compute_price(product, self.cfg.pricing)
-            if price.rejected:
-                self.db.mark_failed(row["product_id"], f"цена: {price.rejected}")
-                continue
+        price = compute_price(product, self.cfg.pricing)
+        if price.rejected:
+            self.db.mark_failed(row["product_id"], f"цена: {price.rejected}")
+            return "skipped"
 
-            # Рубриката се извежда от конфига ВСЕКИ ПЪТ, а не се чете от
-            # реда в базата: иначе промяна в category_map никога не стига до
-            # вече записаните кандидати, а стари редове носят 0 и се провалят
-            # безкрайно.
-            category_id = self.cfg.listing.category_map.get(product.category_key, 0)
-            if not category_id:
-                self.db.mark_failed(
-                    row["product_id"],
-                    f"няма рубрика за категория '{product.category_key}'",
+        # Рубриката се извежда от конфига ВСЕКИ ПЪТ, а не се чете от
+        # реда в базата: иначе промяна в category_map никога не стига до
+        # вече записаните кандидати, а стари редове носят 0 и се провалят
+        # безкрайно.
+        category_id = self.cfg.listing.category_map.get(product.category_key, 0)
+        if not category_id:
+            self.db.mark_failed(
+                row["product_id"],
+                f"няма рубрика за категория '{product.category_key}'",
+            )
+            return "skipped"
+
+        listing = build_listing(product, price, self.cfg.listing, category_id)
+        images = sorted((self.cfg.images_dir / product.id).glob("*.jpg"))
+        if not images:
+            self.db.mark_failed(row["product_id"], "снимките липсват на диска")
+            return "skipped"
+
+        try:
+            bazar_id, bazar_url = await sink.publish(listing, list(images), page, dry_run)
+        except AuthWallError:
+            raise
+        except CaptchaWall as exc:
+            # Проверката е пред профила, не пред обявата: всеки следващ
+            # кандидат удря същата стена и изгаря по опит, докато след три
+            # цикъла добрите обяви не умрат завинаги. Спираме без опити.
+            log.warning("Bazar.bg иска проверка „не сте робот“, спирам: %s", exc)
+            report.errors.append(str(exc))
+            self.db.log_event("captcha", str(exc), product.id)
+            if self.cfg.notifications.on_error:
+                await self.notifier.error(
+                    "публикуване",
+                    "Bazar.bg поиска проверка „не сте робот“ — публикуването "
+                    "спира до следващия цикъл, кандидатите не губят опит.",
                 )
-                continue
+            return "stop"
+        except ProfileFull as exc:
+            # Таванът е на профила, не на обявата — опит не се губи.
+            log.warning("Bazar.bg казва, че профилът е пълен, спирам: %s", exc)
+            report.errors.append(str(exc))
+            self.db.log_event("profile_full", str(exc), product.id)
+            return "stop"
+        except (PublishError, SelectorMissing) as exc:
+            log.warning("публикуването на %s се провали: %s", product.id, exc)
+            self.db.mark_failed(product.id, str(exc))
+            report.errors.append(str(exc))
+            if self.cfg.notifications.on_error:
+                await self.notifier.error("публикуване", str(exc))
+            await self.pacer.pause()
+            return "skipped"
 
-            listing = build_listing(product, price, self.cfg.listing, category_id)
-            images = sorted((self.cfg.images_dir / product.id).glob("*.jpg"))
-            if not images:
-                self.db.mark_failed(row["product_id"], "снимките липсват на диска")
-                continue
+        if dry_run:
+            log.info("DRY RUN: обявата е попълнена, но не е изпратена")
+            return "stop"
 
-            try:
-                bazar_id, bazar_url = await sink.publish(listing, list(images), page, dry_run)
-            except AuthWallError:
-                raise
-            except CaptchaWall as exc:
-                # Проверката е пред профила, не пред обявата: всеки следващ
-                # кандидат удря същата стена и изгаря по опит, докато след три
-                # цикъла добрите обяви не умрат завинаги. Спираме без опити.
-                log.warning("Bazar.bg иска проверка „не сте робот“, спирам: %s", exc)
-                report.errors.append(str(exc))
-                self.db.log_event("captcha", str(exc), product.id)
-                if self.cfg.notifications.on_error:
-                    await self.notifier.error(
-                        "публикуване",
-                        "Bazar.bg поиска проверка „не сте робот“ — публикуването "
-                        "спира до следващия цикъл, кандидатите не губят опит.",
-                    )
-                break
-            except (PublishError, SelectorMissing) as exc:
-                log.warning("публикуването на %s се провали: %s", product.id, exc)
-                self.db.mark_failed(product.id, str(exc))
-                report.errors.append(str(exc))
-                if self.cfg.notifications.on_error:
-                    await self.notifier.error("публикуване", str(exc))
-                await self.pacer.pause()
-                continue
-
-            if dry_run:
-                log.info("DRY RUN: обявата е попълнена, но не е изпратена")
-                break
-
-            self.db.mark_published(product.id, bazar_id, bazar_url, product.discount_pct)
-            self.db.log_event("published", bazar_url, product.id)
-            limiter.consume()
-            active += 1
-            report.published += 1
-            if self.cfg.notifications.on_publish:
-                await self.notifier.published(
-                    listing.title,
-                    format_money(listing.price, listing.currency),
-                    bazar_url,
-                    source_url=product.url,
-                    cost=format_money(product.price, product.currency),
-                )
-            await self.pacer.publish_pause()
+        self.db.mark_published(product.id, bazar_id, bazar_url, product.discount_pct)
+        self.db.log_event("published", bazar_url, product.id)
+        self._publish_limiter().consume()
+        report.published += 1
+        if self.cfg.notifications.on_publish:
+            await self.notifier.published(
+                listing.title,
+                format_money(listing.price, listing.currency),
+                bazar_url,
+                source_url=product.url,
+                cost=format_money(product.price, product.currency),
+            )
+        await self.pacer.publish_pause()
+        return "published"
 
     # ------------------------------------------------------- непрекъснат режим
 

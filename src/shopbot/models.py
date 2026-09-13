@@ -82,6 +82,15 @@ class Product:
 
 
 @dataclass(slots=True)
+class AdStats:
+    """Какво Bazar.bg показва до обявата в „Моите обяви“."""
+
+    views: int = 0
+    phones: int = 0
+    favorites: int = 0
+
+
+@dataclass(slots=True)
 class Listing:
     """Обява в Bazar.bg, обвързана с продукт."""
 

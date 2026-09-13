@@ -54,7 +54,9 @@ class LimitsConfig(BaseModel):
     max_tiles_per_run: int = 1500
     # Отваряния на продуктова страница — това е скъпото и то се лимитира.
     max_product_pages_per_run: int = 40
-    max_active_listings: int = 60
+    # Места в профила на Bazar.bg. Сайтът брои и деактивираните обяви, така
+    # че това е таванът за активни и неактивни заедно.
+    profile_slots: int = 100
 
 
 class SourceCategory(BaseModel):
@@ -223,6 +225,19 @@ class RemovalConfig(BaseModel):
     misses_before_removal: int = 2
 
 
+class RotationConfig(BaseModel):
+    """Пълен профил: слаба обява отстъпва мястото си на по-добър кандидат."""
+
+    enabled: bool = True
+    # По-млада обява още не е показала дали някой я иска.
+    min_age_days: float = 5.0
+    # С колко кандидатът трябва да надвишава стойността на обявата, която
+    # сменя. Без праг равни артикули се гонят и профилът само се върти.
+    margin: float = 0.05
+    max_per_run: int = 3
+    max_per_day: int = 10
+
+
 class NotificationsConfig(BaseModel):
     on_publish: bool = True
     on_remove: bool = True
@@ -252,6 +267,7 @@ class Config(BaseModel):
     appraisal: AppraisalConfig = Field(default_factory=AppraisalConfig)
     bazar: BazarConfig = Field(default_factory=BazarConfig)
     removal: RemovalConfig = Field(default_factory=RemovalConfig)
+    rotation: RotationConfig = Field(default_factory=RotationConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
 
     # Попълва се извън YAML-а.

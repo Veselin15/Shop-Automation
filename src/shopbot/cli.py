@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -32,9 +33,9 @@ from .notify import (
     check_token,
     discover_chats,
 )
-from .orchestrator import Orchestrator, publish_queue
+from .orchestrator import Orchestrator, publish_queue, swap_plan
 from .pricing import compute_price, format_money
-from .selection import evaluate
+from .selection import evaluate, interest_rate
 from .sinks.bazar import JS_FIELD_HELPERS, BazarSink
 from .sources.bestsecret import BestSecretSource, looks_logged_in
 
@@ -403,19 +404,59 @@ def candidates(limit: int = typer.Option(30, "--limit")) -> None:
 
 @app.command()
 def listings() -> None:
-    """Активните обяви и връзката им с източника."""
+    """Активните обяви, връзката им с източника и интересът от последното влизане."""
     _, db, _ = _ctx()
     table = Table(title="активни обяви")
     table.add_column("bazar id")
     table.add_column("заглавие", overflow="fold")
     table.add_column("цена", justify="right")
+    table.add_column("прегл.", justify="right")
+    table.add_column("тел.", justify="right")
+    table.add_column("люб.", justify="right")
     table.add_column("продукт")
     for row in db.active_listings():
+        read = bool(row["stats_at"])
         table.add_row(
             row["bazar_id"] or "-",
             row["title"][:50],
             f"{row['price']:.2f} {row['currency']}",
+            str(row["views"]) if read else "?",
+            str(row["phones"]) if read else "?",
+            str(row["favorites"]) if read else "?",
             row["product_id"],
+        )
+    console.print(table)
+
+
+@app.command()
+def rotation(limit: int = typer.Option(10, "--limit")) -> None:
+    """Коя обява би отстъпила място на кой кандидат, когато профилът е пълен.
+
+    Смята по броячите от последното влизане в Bazar.bg — не отваря браузър.
+    """
+    cfg, db, _ = _ctx()
+    swaps = swap_plan(db, cfg, limit)
+    if not swaps:
+        console.print(
+            "Няма размяна, която да си струва: обявите са млади, някой ги иска, "
+            "или броячите още не са прочетени."
+        )
+        return
+
+    now = datetime.now(UTC)
+    table = Table(title=f"размени при пълен профил ({len(swaps)})")
+    table.add_column("пада", overflow="fold")
+    table.add_column("стойност", justify="right")
+    table.add_column("прегл./ден", justify="right")
+    table.add_column("влиза", overflow="fold")
+    table.add_column("оценка", justify="right")
+    for swap in swaps:
+        table.add_row(
+            swap.victim["title"][:44],
+            f"{swap.victim_value:.2f}",
+            f"{interest_rate(swap.victim, now):.1f}",
+            swap.candidate["title"][:44],
+            f"{max(swap.candidate['appraisal'], 0):.2f}",
         )
     console.print(table)
 
